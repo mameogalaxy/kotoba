@@ -683,7 +683,11 @@
     var res = await jev({
       入力中の断片: text,
       過去の項目: cand.map(function(n){
-        return { id:n.id, 見出し:n.title, 状態:n.status, 結論:n.conclusion || "" };
+        var body = (n.materials || []).map(function(m){ return m.text; }).join(" ").replace(/\s+/g, " ");
+        var item = { id:n.id, 見出し:n.title, 状態:n.status };
+        if (n.conclusion) item.結論 = n.conclusion;
+        if (body && body.indexOf(n.title.replace(/…$/, "")) !== 0 || body.length > n.title.length + 4) item.抜粋 = body.slice(0, 60);
+        return item;
       })
     }, Object.assign({
       thinkingOf: {
@@ -1096,8 +1100,10 @@
   var recallState = null;   /* 探しものとして送った結果。次に打ち始めるまで中心に残す */
   var semTimer = null, semInFlight = null;
 
+  var PUNCT = /[\s、。，．・!！?？「」『』（）()\[\]【】〈〉《》■□●○◆◇▲△★☆\/／:：;；~〜\-_=＝+＋*＊#＃|｜"'`]/g;
+  function normText(str){ return String(str||"").toLowerCase().replace(PUNCT, ""); }
   function bigrams(str){
-    var t = String(str||"").toLowerCase().replace(/[\s、。，．・!！?？「」『』（）()\[\]]/g,"");
+    var t = normText(str);
     var set = new Set();
     if (t.length === 1){ set.add(t); return set; }
     for (var i=0;i<t.length-1;i++) set.add(t.slice(i,i+2));
@@ -1109,21 +1115,49 @@
     return (2*hit)/(a.size+b.size);
   }
   function idx(n){
-    var key = n.id + "|" + (n.updatedAt||0) + "|" + ((n.materials||[]).length);
-    if (n._bgKey !== key || !(n._bg instanceof Set)){
-      n._bg = bigrams([n.title, n.conclusion].concat((n.materials||[]).map(function(m){ return m.text; })).filter(Boolean).join(" "));
+    var key = n.id + "|" + (n.updatedAt||0) + "|" + ((n.materials||[]).length) + "|" + (n.conclusion||"").length;
+    if (n._bgKey !== key || !(n._bg instanceof Set) || typeof n._ft !== "string"){
+      var all = [n.title, n.conclusion].concat((n.materials||[]).map(function(m){ return m.text; })).filter(Boolean).join(" ");
+      n._bg = bigrams(all);
+      n._ft = normText(all);
       n._bgKey = key;
     }
     return n._bg;
   }
+
+  /* 「なん」「だっ」のようなひらがなだけの2文字は、つなぎの言葉なので数えない。
+     strict: 両方ひらがな以外（バス・時刻）／loose: どちらかがひらがな以外（乗り・り場） */
+  var HIRA = /[\u3041-\u309f]/;
+  function contentOf(set, strict){
+    var out = new Set();
+    set.forEach(function(g){
+      if (g.length !== 2) return;
+      var a = HIRA.test(g.charAt(0)), b = HIRA.test(g.charAt(1));
+      if (strict ? (!a && !b) : !(a && b)) out.add(g);
+    });
+    return out;
+  }
+  function coverage(basis, b){
+    var hit = 0; basis.forEach(function(g){ if (b.has(g)) hit++; });
+    return basis.size ? hit / basis.size : 0;
+  }
+
+  /* 打った言葉が、その項目の中にどれだけ入っているか。
+     項目の長さでは割らないので、長いメモの中の一語でも当たる */
   function localMatches(text){
-    var q = bigrams(text); if (!q.size) return [];
+    var qn = normText(text); if (qn.length < 2) return [];
+    var q = bigrams(text), strict = contentOf(q, true), loose = contentOf(q, false);
     var out = [];
     nodes.forEach(function(n){
-      var sim = dice(q, idx(n));
-      if (sim < 0.07) return;
-      var boost = n.status === "open" ? 1.15 : (n.status === "done" ? 1.05 : 0.9);
-      out.push({ n:n, score:sim*boost });
+      var b = idx(n), score = 0;
+      if (n._ft.indexOf(qn) >= 0) score = 1;
+      else {
+        var cov = Math.max(coverage(strict, b), loose.size >= 2 ? coverage(loose, b) : 0);
+        if (cov >= 0.6) score = 0.4 + 0.5 * cov;
+      }
+      if (!score) return;
+      var boost = n.status === "open" ? 1.08 : (n.status === "done" ? 1.04 : 1);
+      out.push({ n:n, score: score * boost + nowScore(n) / 2000 });
     });
     out.sort(function(a,b){ return b.score - a.score; });
     lastLocalTop = out.length ? out[0].score : 0;
@@ -1193,7 +1227,7 @@
   function scheduleSemantic(){
     clearTimeout(semTimer);
     var text = input.value.trim();
-    if (!getCfg().key || text.length < 4 || nodes.length === 0) return;
+    if (!getCfg().key || text.length < 2 || nodes.length === 0) return;
     /* Jev は 70〜500ms・0.0001円なので、止まってすぐ投げてよい */
     semTimer = setTimeout(function(){
       if (semanticFor === text || semInFlight) return;
@@ -1201,7 +1235,7 @@
     }, 350);
   }
   async function runSemantic(text){
-    var cand = nodes.filter(function(n){ return n.status !== "note"; }).slice(0, 200);
+    var cand = nodes.slice().sort(function(a, b){ return nowScore(b) - nowScore(a); }).slice(0, 120);
     if (!cand.length) return;
     semInFlight = text; renderFusen();
     try {
