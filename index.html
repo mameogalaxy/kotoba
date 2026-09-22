@@ -97,16 +97,6 @@
   @keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
   @media (prefers-reduced-motion: reduce){.pulse{animation:none;opacity:.7}}
 
-  .judge{margin-top:10px; border:1px solid var(--line); background:var(--surface); border-radius:var(--radius); padding:10px 12px}
-  .judge-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px}
-  .judge-head span{font-size:10.5px; letter-spacing:.08em; color:var(--muted)}
-  .judge-head button{background:transparent; border:0; color:var(--muted); font-size:15px; line-height:1; padding:2px 4px}
-  .judge table{width:100%; border-collapse:collapse; font-size:12px}
-  .judge td{padding:2px 0; vertical-align:top}
-  .judge td:first-child{color:var(--muted); width:8.5em; white-space:nowrap}
-  .judge td:last-child{color:var(--ink2); font-variant-numeric:tabular-nums}
-  .judge .miss{color:var(--bad)}
-  .judge .hit{color:var(--done)}
   .neuron{margin-top:10px; border:1px solid var(--accent); background:var(--accent-soft); border-radius:var(--radius); padding:11px 13px}
   .neuron h4{margin:0 0 3px; font-size:12px; letter-spacing:.04em; color:var(--accent); font-weight:700}
   .neuron p{margin:0; font-size:13px; color:var(--ink2)}
@@ -251,7 +241,6 @@
       <p class="status" id="status" hidden></p>
     </div>
 
-    <div id="judgeBox"></div>
     <div id="neuronBox"></div>
 
     <div class="viewbar">
@@ -323,6 +312,14 @@
         </p>
       </div>
       <div class="field">
+        <label for="cfgContexts">枝の分け方</label>
+        <textarea class="box" id="cfgContexts" rows="2" spellcheck="false" style="min-height:0"></textarea>
+        <p class="hint">
+          マップの色つきの枝になる分類です。Jev は入れたものを、この中から1つ選んで振り分けます。
+          読点かカンマで区切って、11個まで。当てはまらないものは自動で「その他」に入ります。
+        </p>
+      </div>
+      <div class="field">
         <label for="cfgModel">モデル</label>
         <input class="box" id="cfgModel" type="text" autocomplete="off" spellcheck="false">
       </div>
@@ -353,7 +350,9 @@
 
   /* ============================ 定数 ============================ */
   var KINDS     = ["疑問","調べかけ","アイデア","タスク","事実メモ","買いたい"];
-  var CONTEXTS  = ["仕事","副業/EC","健康","家族","趣味","学習","その他"];
+  var DEFAULT_CONTEXTS = ["仕事","副業","お金","健康","人間関係","趣味","学び","生活"];
+  var CONTEXTS = DEFAULT_CONTEXTS.concat(["その他"]);
+  var BRANCH_COLORS = ["#e8605c","#4aa8d4","#4fae80","#ee9150","#8a6ad0","#de6fa0","#c9a227","#4f9e9a","#7d8fd6","#c77a4f","#6aa84f"];
   var IMP_LEVELS   = ["どうでもいい","少し気になる","そこそこ大事","かなり大事","最優先"];
   var FRESH_LEVELS = ["数日で無価値になる","数週間もつ","数ヶ月もつ","年単位で有効"];
   var HALFLIFE = {
@@ -379,12 +378,31 @@
     try { return Object.assign(d, JSON.parse(localStorage.getItem(CFG_KEY) || "{}")); }
     catch(e){ return d; }
   }
+  function parseContexts(text){
+    var seen = {}, out = [];
+    String(text || "").split(/[,、，\n]+/).forEach(function(w){
+      w = w.trim();
+      if (!w || w === "その他" || seen[w]) return;
+      seen[w] = 1; out.push(w.slice(0, 12));
+    });
+    return out.slice(0, 11);
+  }
+  function loadContexts(){
+    var c = getCfg().contexts;
+    var list = (Array.isArray(c) && c.length) ? c.slice(0, 11) : DEFAULT_CONTEXTS.slice();
+    CONTEXTS = list.concat(["その他"]);
+  }
   function setCfg(c){ try { localStorage.setItem(CFG_KEY, JSON.stringify(c)); } catch(e){} }
 
   function saveNodes(){ try { localStorage.setItem(DATA_KEY, JSON.stringify(nodes)); } catch(e){} }
   function loadNodes(){
     try { nodes = JSON.parse(localStorage.getItem(DATA_KEY) || "[]") || []; }
     catch(e){ nodes = []; }
+    var RENAMED = { "副業/EC":"副業", "学習":"学び", "家族":"人間関係" };
+    nodes.forEach(function(n){
+      if (RENAMED[n.context] && CONTEXTS.indexOf(n.context) < 0 && CONTEXTS.indexOf(RENAMED[n.context]) >= 0)
+        n.context = RENAMED[n.context];
+    });
   }
 
   /* ============================ Jev クライアント ============================ */
@@ -925,7 +943,7 @@
 
   async function capture(){
     var text = input.value.trim(); if (!text) return;
-    send.disabled = true; $("neuronBox").textContent = ""; $("judgeBox").textContent = "";
+    send.disabled = true; $("neuronBox").textContent = "";
 
     if (!getCfg().key){
       put(rawNode(text)); input.value = ""; clearFusen();
@@ -970,57 +988,9 @@
     }
 
     if (answerTo && answerTo.status === "open") showNeuron(answerTo, r.isAnswer, text);
-    showJudgment(r, target, answerTo);
 
     input.value = ""; clearFusen(); send.disabled = false;
   }
-  function showJudgment(r, target, answerTo){
-    var box = $("judgeBox"); box.textContent = "";
-    var d = document.createElement("div"); d.className = "judge";
-
-    var head = document.createElement("div"); head.className = "judge-head";
-    var lbl = document.createElement("span"); lbl.textContent = "JEV の判定内訳";
-    var x = document.createElement("button"); x.type = "button"; x.textContent = "✕";
-    x.setAttribute("aria-label","閉じる");
-    x.onclick = function(){ box.textContent = ""; };
-    head.appendChild(lbl); head.appendChild(x); d.appendChild(head);
-
-    var tb = document.createElement("table");
-    function row(k, v, cls){
-      var tr = document.createElement("tr");
-      var a = document.createElement("td"); a.textContent = k;
-      var b = document.createElement("td"); b.textContent = v;
-      if (cls) b.className = cls;
-      tr.appendChild(a); tr.appendChild(b); tb.appendChild(tr);
-    }
-    function p(v){ return typeof v === "number" ? Math.round(v*100) + "%" : "読めず"; }
-
-    row("未解決か", p(r.unresolved) + (r.unresolved >= 0.5 ? " → 宙ぶらりん" : " → メモ"),
-        typeof r.unresolved === "number" ? null : "miss");
-    row("種類", r.kind);
-    row("文脈", r.context);
-    row("重要度", r.impIdx === null ? "読めず（既定の3）" : r.importance + "/5 · " + IMP_LEVELS[r.importance-1],
-        r.impIdx === null ? "miss" : null);
-    row("鮮度", r.freshIdx === null ? "読めず（既定の数週間）" : r.freshness,
-        r.freshIdx === null ? "miss" : null);
-
-    row("既存の材料か", p(r.isMaterial));
-    var mo = r.materialOf == null ? "読めず" : String(r.materialOf);
-    row("材料の宛先", target ? "→ " + target.title : (mo === NONE ? NONE : mo + "（項目に結びつかず）"),
-        target ? "hit" : (mo === NONE || mo === "読めず" ? null : "miss"));
-
-    row("答えか", p(r.isAnswer));
-    var ao = r.answerOf == null ? "読めず" : String(r.answerOf);
-    row("答えの宛先", answerTo ? "→ " + answerTo.title : (ao === NONE ? NONE : ao + "（項目に結びつかず）"),
-        answerTo ? "hit" : (ao === NONE || ao === "読めず" ? null : "miss"));
-
-    if (r.usage && typeof r.usage.input_tokens === "number"){
-      var yen = (r.usage.input_tokens * 0.042 / 1e6) * 150;
-      row("この判定の原価", r.usage.input_tokens + " トークン · 約" + yen.toFixed(4) + "円");
-    }
-    d.appendChild(tb); box.appendChild(d);
-  }
-
   function pct(label, p){
     return (typeof p === "number") ? "（" + label + " " + Math.round(p*100) + "%）" : "";
   }
@@ -1052,15 +1022,20 @@
     $("cfgKey").value = c.key || "";
     $("cfgEndpoint").value = c.endpoint || DEFAULT_ENDPOINT;
     $("cfgModel").value = c.model || DEFAULT_MODEL;
+    $("cfgContexts").value = CONTEXTS.filter(function(x){ return x !== "その他"; }).join("、");
     $("probe").textContent = ""; refreshRaw();
     cfgSheet.hidden = false;
   }
   function saveCfg(){
+    var ctx = parseContexts($("cfgContexts").value);
     setCfg({
       key: $("cfgKey").value.trim(),
       endpoint: $("cfgEndpoint").value.trim() || DEFAULT_ENDPOINT,
-      model: $("cfgModel").value.trim() || DEFAULT_MODEL
+      model: $("cfgModel").value.trim() || DEFAULT_MODEL,
+      contexts: ctx.length ? ctx : DEFAULT_CONTEXTS.slice()
     });
+    loadContexts();
+    render();
     verified = false;
     updateEngine();
   }
@@ -1102,8 +1077,10 @@
   /* 中心は「いまの自分」。文脈ごとの枝に項目がぶら下がる。
      普段は静止していて、入力中だけ候補が枝から抜けて中心へ寄り、残りが詰めて並び替わる。 */
   var Mind = (function(){
-    var PAL = { "副業/EC":"#e8605c", "仕事":"#4aa8d4", "健康":"#4fae80", "家族":"#de6fa0",
-                "趣味":"#ee9150", "学習":"#8a6ad0", "その他":"#8b95a3" };
+    function colorOf(name){
+      var i = CONTEXTS.indexOf(name);
+      return (name === "その他" || i < 0) ? "#8b95a3" : BRANCH_COLORS[i % BRANCH_COLORS.length];
+    }
     var SVGNS = "http://www.w3.org/2000/svg";
     var BLOB = "M112 8C160 14 196 52 192 104C188 150 158 186 108 192C58 198 14 168 8 116C2 64 40 20 88 10C96 8 104 7 112 8Z";
 
@@ -1114,9 +1091,9 @@
     var hub = { x:0, y:0, d:0, top:0 }, lastH = 0;
 
     function score(n){ return n.status === "open" ? nowScore(n) : Math.round(nowScore(n) * 0.55); }
-    function catOf(n){ return PAL[n.context] ? n.context : "その他"; }
+    function catOf(n){ return CONTEXTS.indexOf(n.context) >= 0 ? n.context : "その他"; }
     function signature(){
-      return nodes.map(function(n){
+      return CONTEXTS.join(",") + "#" + nodes.map(function(n){
         return n.id + ":" + (n.updatedAt||0) + ":" + n.status + ":" + n.context + ":" + (n.title||"");
       }).join("|");
     }
@@ -1242,7 +1219,7 @@
         var cur = top ? topBottom : botTop;
         Q[q].forEach(function(c, ci){
           if (ci) cur += top ? -blockGap : blockGap;
-          var color = PAL[c.name];
+          var color = colorOf(c.name);
           var cy = top ? cur - catH : cur;
           var ck = "c:" + c.name;
           want[ck] = { kind:"cat", x: left ? x0 + colW - catW : x0, y:cy, w:catW, h:catH, c:color,
@@ -1276,7 +1253,7 @@
       var candW = Math.min(W - pad*2 - 16, 330), cy2 = hubY + hubD + 16;
       cands.forEach(function(id){
         var n = find(id); if (!n) return;
-        var color = PAL[catOf(n)], k = "i:" + n.id;
+        var color = colorOf(catOf(n)), k = "i:" + n.id;
         want[k] = { kind:"item", cand:true, x:(W - candW)/2, y:cy2, w:candW, h:candRow, c:color,
                     text: (n.title || "(無題)") + (n.status === "done" && n.conclusion ? "  →  " + n.conclusion : ""),
                     id:n.id, status:n.status || "open", op:1 };
@@ -1304,7 +1281,7 @@
         var sx = q.charAt(1) === "L" ? 1 : -1, sy = q.charAt(0) === "T" ? 1 : -1;
         el.style.transform = "translate(" + bx + "px," + by + "px) scale(" + sx + "," + sy + ")";
         el.style.opacity = c ? (focus ? "0.06" : "") : "0";
-        if (c) el.style.color = PAL[c.name];
+        if (c) el.style.color = colorOf(c.name);
       });
 
       var hubCx = W/2, hubCy = hubY + hubD/2;
@@ -1535,6 +1512,7 @@
   })();
 
   /* ============================ 起動 ============================ */
+  loadContexts();
   loadNodes();
   updateEngine();
   Mind.init();
