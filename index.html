@@ -97,6 +97,16 @@
   @keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
   @media (prefers-reduced-motion: reduce){.pulse{animation:none;opacity:.7}}
 
+  .judge{margin-top:10px; border:1px solid var(--line); background:var(--surface); border-radius:var(--radius); padding:10px 12px}
+  .judge-head{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px}
+  .judge-head span{font-size:10.5px; letter-spacing:.08em; color:var(--muted)}
+  .judge-head button{background:transparent; border:0; color:var(--muted); font-size:15px; line-height:1; padding:2px 4px}
+  .judge table{width:100%; border-collapse:collapse; font-size:12px}
+  .judge td{padding:2px 0; vertical-align:top}
+  .judge td:first-child{color:var(--muted); width:8.5em; white-space:nowrap}
+  .judge td:last-child{color:var(--ink2); font-variant-numeric:tabular-nums}
+  .judge .miss{color:var(--bad)}
+  .judge .hit{color:var(--done)}
   .neuron{margin-top:10px; border:1px solid var(--accent); background:var(--accent-soft); border-radius:var(--radius); padding:11px 13px}
   .neuron h4{margin:0 0 3px; font-size:12px; letter-spacing:.04em; color:var(--accent); font-weight:700}
   .neuron p{margin:0; font-size:13px; color:var(--ink2)}
@@ -186,6 +196,7 @@
       <p class="status" id="status" hidden></p>
     </div>
 
+    <div id="judgeBox"></div>
     <div id="neuronBox"></div>
 
     <nav class="tabs" id="tabs">
@@ -475,6 +486,8 @@
     var freshIdx = asScore(a.freshness, FRESH_LEVELS);
 
     return {
+      raw: a,
+      impIdx: impIdx, freshIdx: freshIdx,
       unresolved: asNoul(a.unresolved),
       kind:       asChoice(a.kind) || "事実メモ",
       context:    asChoice(a.context) || "その他",
@@ -545,6 +558,23 @@
     return null;
   }
   function newId(){ return "n" + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+  /* Choice の答えを項目に解決する。
+     Jev が id ではなく説明文（見出し）を返してくる場合があるので、両方で引く。 */
+  function resolveNode(ans){
+    if (!ans || ans === NONE) return null;
+    var key = String(ans).trim();
+    var byId = find(key);
+    if (byId) return byId;
+    var norm = function(t){ return String(t||"").replace(/\s+/g,"").replace(/（結論あり）$/,""); };
+    var target = norm(key);
+    for (var i=0;i<nodes.length;i++) if (norm(nodes[i].title) === target) return nodes[i];
+    for (var j=0;j<nodes.length;j++){
+      var t = norm(nodes[j].title);
+      if (t && (t.indexOf(target) === 0 || target.indexOf(t) === 0)) return nodes[j];
+    }
+    return null;
+  }
 
   /* ============================ 保存 ============================ */
   function put(n){
@@ -787,7 +817,8 @@
     semInFlight = text; renderFusen();
     try {
       var ids = await rank(text, cand);
-      if (input.value.trim() === text){ semantic = ids; semanticFor = text; }
+      var resolved = ids.map(function(x){ var n = resolveNode(x); return n && n.id; }).filter(Boolean);
+      if (input.value.trim() === text){ semantic = resolved; semanticFor = text; }
     } catch(e){ /* 1段目だけで機能は成立する */ }
     finally { semInFlight = null; renderFusen(); }
   }
@@ -824,7 +855,7 @@
 
   async function capture(){
     var text = input.value.trim(); if (!text) return;
-    send.disabled = true; $("neuronBox").textContent = "";
+    send.disabled = true; $("neuronBox").textContent = ""; $("judgeBox").textContent = "";
 
     if (!getCfg().key){
       put(rawNode(text)); input.value = ""; clearFusen();
@@ -843,8 +874,10 @@
     refreshRaw();
 
     var t = Date.now();
-    var target = (r.isMaterial !== null && r.isMaterial >= 0.55 && r.materialOf && r.materialOf !== NONE)
-      ? find(r.materialOf) : null;
+    var target = (r.isMaterial !== null && r.isMaterial >= 0.5) ? resolveNode(r.materialOf) : null;
+    var answerTo = (r.isAnswer !== null && r.isAnswer >= 0.5) ? resolveNode(r.answerOf) : null;
+    /* 答えは材料でもある。材料の宛先が取れなければ答えの宛先を使う。 */
+    if (!target && answerTo) target = answerTo;
 
     if (target){
       target.materials = (target.materials||[]).concat([{ text:text, at:t }]);
@@ -866,13 +899,58 @@
       if (isQ){ currentTab = "open"; syncTabs(); render(); }
     }
 
-    if (r.isAnswer !== null && r.isAnswer >= 0.55 && r.answerOf && r.answerOf !== NONE){
-      var an = find(r.answerOf);
-      if (an && an.status === "open") showNeuron(an, r.isAnswer, text);
-    }
+    if (answerTo && answerTo.status === "open") showNeuron(answerTo, r.isAnswer, text);
+    showJudgment(r, target, answerTo);
 
     input.value = ""; clearFusen(); send.disabled = false;
   }
+  function showJudgment(r, target, answerTo){
+    var box = $("judgeBox"); box.textContent = "";
+    var d = document.createElement("div"); d.className = "judge";
+
+    var head = document.createElement("div"); head.className = "judge-head";
+    var lbl = document.createElement("span"); lbl.textContent = "JEV の判定内訳";
+    var x = document.createElement("button"); x.type = "button"; x.textContent = "✕";
+    x.setAttribute("aria-label","閉じる");
+    x.onclick = function(){ box.textContent = ""; };
+    head.appendChild(lbl); head.appendChild(x); d.appendChild(head);
+
+    var tb = document.createElement("table");
+    function row(k, v, cls){
+      var tr = document.createElement("tr");
+      var a = document.createElement("td"); a.textContent = k;
+      var b = document.createElement("td"); b.textContent = v;
+      if (cls) b.className = cls;
+      tr.appendChild(a); tr.appendChild(b); tb.appendChild(tr);
+    }
+    function p(v){ return typeof v === "number" ? Math.round(v*100) + "%" : "読めず"; }
+
+    row("未解決か", p(r.unresolved) + (r.unresolved >= 0.5 ? " → 宙ぶらりん" : " → メモ"),
+        typeof r.unresolved === "number" ? null : "miss");
+    row("種類", r.kind);
+    row("文脈", r.context);
+    row("重要度", r.impIdx === null ? "読めず（既定の3）" : r.importance + "/5 · " + IMP_LEVELS[r.importance-1],
+        r.impIdx === null ? "miss" : null);
+    row("鮮度", r.freshIdx === null ? "読めず（既定の数週間）" : r.freshness,
+        r.freshIdx === null ? "miss" : null);
+
+    row("既存の材料か", p(r.isMaterial));
+    var mo = r.materialOf == null ? "読めず" : String(r.materialOf);
+    row("材料の宛先", target ? "→ " + target.title : (mo === NONE ? NONE : mo + "（項目に結びつかず）"),
+        target ? "hit" : (mo === NONE || mo === "読めず" ? null : "miss"));
+
+    row("答えか", p(r.isAnswer));
+    var ao = r.answerOf == null ? "読めず" : String(r.answerOf);
+    row("答えの宛先", answerTo ? "→ " + answerTo.title : (ao === NONE ? NONE : ao + "（項目に結びつかず）"),
+        answerTo ? "hit" : (ao === NONE || ao === "読めず" ? null : "miss"));
+
+    if (r.usage && typeof r.usage.input_tokens === "number"){
+      var yen = (r.usage.input_tokens * 0.042 / 1e6) * 150;
+      row("この判定の原価", r.usage.input_tokens + " トークン · 約" + yen.toFixed(4) + "円");
+    }
+    d.appendChild(tb); box.appendChild(d);
+  }
+
   function pct(label, p){
     return (typeof p === "number") ? "（" + label + " " + Math.round(p*100) + "%）" : "";
   }
