@@ -159,6 +159,14 @@
   .ctx-form{display:flex; flex-direction:column; gap:8px; margin:-8px 0 16px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--surface)}
   .ctx-form .primary{align-self:flex-start}
   .ctx-picker .chip.on{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
+  .title-row{display:flex; align-items:flex-start; gap:10px}
+  .title-row h2{flex:1; min-width:0}
+  .title-row .copy{margin-top:4px}
+  .edit-box{display:flex; flex-direction:column; gap:8px; margin-bottom:12px}
+  .edit-box .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .edit-box textarea.box{min-height:90px}
+  .sheet-note{display:flex; align-items:center; gap:7px; margin:-2px 0 12px; font-size:12px; color:var(--accent)}
+  .sheet-note.bad{color:var(--bad)}
   .written{margin:-4px 0 12px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums}
   .mm-more{background:transparent; border:1px dashed var(--line); color:var(--muted); font-size:11px}
   .mm-item.cand{z-index:3; border-width:2px; font-weight:700; font-size:12.5px;
@@ -993,7 +1001,39 @@
     $("sheetStatus").textContent = n.status === "open" ? "宙ぶらりん" : (n.status === "done" ? "解決済み" : "メモ");
     sheetBody.textContent = "";
 
-    var h = document.createElement("h2"); h.textContent = n.title || "(無題)"; sheetBody.appendChild(h);
+    var tr = document.createElement("div"); tr.className = "title-row";
+    var h = document.createElement("h2"); h.textContent = n.title || "(無題)"; tr.appendChild(h);
+    var eb = document.createElement("button"); eb.type = "button"; eb.className = "copy"; eb.textContent = "編集";
+    tr.appendChild(eb); sheetBody.appendChild(tr);
+    eb.onclick = function(){
+      var box = document.createElement("div"); box.className = "edit-box";
+      var inp = document.createElement("input"); inp.className = "box"; inp.maxLength = 200;
+      inp.value = n.title || ""; inp.setAttribute("aria-label", "見出し");
+      var row = document.createElement("div"); row.className = "row";
+      var ok = document.createElement("button"); ok.type = "button"; ok.className = "primary"; ok.textContent = "保存して振り分け直す";
+      var no = document.createElement("button"); no.type = "button"; no.className = "ghost"; no.textContent = "やめる";
+      row.appendChild(ok); row.appendChild(no); box.appendChild(inp); box.appendChild(row);
+      tr.replaceWith(box); inp.focus(); inp.select();
+      no.onclick = function(){ openSheet(n.id); };
+      function go(){
+        var v = inp.value.trim(); if (!v){ inp.focus(); return; }
+        if (v === n.title){ openSheet(n.id); return; }
+        editNode(n, function(){
+          var old = n.title;
+          n.title = v;
+          /* 見出しと同じ文章の材料は、いっしょに直す（「今日シフト作成」だけの項目など） */
+          (n.materials || []).forEach(function(m){ if (m.text === old) m.text = v; });
+        });
+      }
+      ok.onclick = go;
+      inp.addEventListener("keydown", function(e){ if (e.key === "Enter" && !e.isComposing){ e.preventDefault(); go(); } });
+    };
+    if (sheetNote && sheetNote.id === n.id){
+      var sn = document.createElement("p"); sn.className = "sheet-note" + (sheetNote.bad ? " bad" : "");
+      if (sheetNote.busy){ var pl = document.createElement("span"); pl.className = "pulse"; sn.appendChild(pl); }
+      sn.appendChild(document.createTextNode(sheetNote.text));
+      sheetBody.appendChild(sn);
+    }
     var wr = document.createElement("p"); wr.className = "written";
     wr.textContent = "書いた日  " + whenLong(n.createdAt || n.updatedAt);
     sheetBody.appendChild(wr);
@@ -1065,7 +1105,39 @@
         d.appendChild(document.createTextNode(m.text));
         var foot = document.createElement("div"); foot.className = "mat-foot";
         var t = document.createElement("time"); t.textContent = when(m.at, true) + " · " + ago(m.at); foot.appendChild(t);
+        var me = document.createElement("button"); me.type = "button"; me.className = "copy"; me.textContent = "編集";
+        me.style.marginLeft = "auto";
+        foot.appendChild(me);
         foot.appendChild(copyButton(function(){ return m.text; }));
+        me.onclick = function(){
+          var box = document.createElement("div"); box.className = "edit-box";
+          var ta = document.createElement("textarea"); ta.className = "box"; ta.value = m.text; ta.setAttribute("aria-label", "材料");
+          var row = document.createElement("div"); row.className = "row";
+          var ok = document.createElement("button"); ok.type = "button"; ok.className = "primary"; ok.textContent = "保存して振り分け直す";
+          var no = document.createElement("button"); no.type = "button"; no.className = "ghost"; no.textContent = "やめる";
+          row.appendChild(ok); row.appendChild(no);
+          if ((n.materials || []).length > 1){
+            var del = document.createElement("button"); del.type = "button"; del.className = "danger"; del.textContent = "この材料を消す";
+            del.style.marginLeft = "auto";
+            del.onclick = function(){
+              editNode(n, function(){ n.materials = n.materials.filter(function(x){ return x !== m; }); });
+            };
+            row.appendChild(del);
+          }
+          box.appendChild(ta); box.appendChild(row);
+          d.replaceWith(box); ta.focus();
+          no.onclick = function(){ openSheet(n.id); };
+          ok.onclick = function(){
+            var v = ta.value.trim(); if (!v){ ta.focus(); return; }
+            if (v === m.text){ openSheet(n.id); return; }
+            editNode(n, function(){
+              var old = m.text;
+              m.text = v;
+              /* 見出しがこの材料から作られていたなら、見出しも作り直す */
+              if (n.title === old || n.title === titleOf(old)) n.title = titleOf(v);
+            });
+          };
+        };
         d.appendChild(foot);
         sheetBody.appendChild(d);
       });
@@ -1133,7 +1205,57 @@
     return b;
   }
 
-  function closeSheet(){ sheet.hidden = true; openId = null; }
+  var sheetNote = null, pendingFlash = null;
+  function titleOf(text){ text = String(text || "").trim(); return text.length > 30 ? text.slice(0, 30) + "…" : text; }
+  function ctxName(c){ return CONTEXTS.indexOf(c) >= 0 ? c : "その他"; }
+
+  /* 項目の中身だけを見て、枝・種類・重要度・鮮度・宙ぶらりんかを判定し直す */
+  async function reclassifyNode(n){
+    var qs = classifyQuestions([]);
+    var body = [n.title].concat((n.materials || []).map(function(m){ return m.text; }))
+      .filter(function(t, i, arr){ return arr.indexOf(t) === i; }).join("\n").slice(0, 1500);
+    var res = await jev({ 断片: body, 現在時刻: new Date().toISOString() },
+      { unresolved: qs.unresolved, kind: qs.kind, context: qs.context, importance: qs.importance, freshness: qs.freshness });
+    var a = answersOf(res);
+    var kind = asChoice(a.kind), ctx = asChoice(a.context), un = asNoul(a.unresolved);
+    var imp = asScore(a.importance, IMP_LEVELS), fr = asScore(a.freshness, FRESH_LEVELS);
+    if (kind && KINDS.indexOf(kind) >= 0) n.kind = kind;
+    if (ctx && CONTEXTS.indexOf(ctx) >= 0) n.context = ctx;
+    if (imp !== null) n.importance = Math.min(5, Math.max(1, Math.round(imp) + 1));
+    if (fr !== null) n.freshness = FRESH_LEVELS[Math.min(FRESH_LEVELS.length - 1, Math.max(0, Math.round(fr)))];
+    if (n.status !== "done" && un !== null) n.status = un >= 0.5 ? "open" : "note";
+  }
+
+  async function editNode(n, mutate){
+    var before = { ctx: ctxName(n.context), status: n.status };
+    mutate();
+    put(n);
+    if (!getCfg().key){
+      sheetNote = { id:n.id, text:"保存しました（APIキーがないので振り分けはそのままです）" };
+      openSheet(n.id); return;
+    }
+    sheetNote = { id:n.id, text:"保存しました。Jev が振り分け直しています…", busy:true };
+    openSheet(n.id);
+    try { await reclassifyNode(n); }
+    catch(e){
+      sheetNote = { id:n.id, text:"保存しました。振り分け直しはできませんでした（" + (e.message || "通信エラー") + "）", bad:true };
+      if (openId === n.id) openSheet(n.id);
+      return;
+    }
+    saveNodes(); render(); refreshRaw();
+    var now = ctxName(n.context), label = { open:"宙ぶらりん", done:"解決済み", note:"メモ" };
+    var bits = [];
+    if (now !== before.ctx) bits.push(before.ctx + " → " + now + " に移りました");
+    if (n.status !== before.status) bits.push(label[before.status] + " → " + label[n.status]);
+    sheetNote = { id:n.id, text: bits.length ? bits.join("。") + "。" : "振り分けは変わりませんでした（" + now + "）。" };
+    if (now !== before.ctx) pendingFlash = { id:n.id, label: now + " に移りました" };
+    if (openId === n.id) openSheet(n.id);
+  }
+
+  function closeSheet(){
+    sheet.hidden = true; openId = null; sheetNote = null;
+    if (pendingFlash){ Mind.flash(pendingFlash.id, pendingFlash.label); pendingFlash = null; }
+  }
 
   /* ============================ 付箋 ============================ */
   var semantic = [], semanticFor = "", semanticNote = "", semanticTs = {}, lastLocalTop = 0;
