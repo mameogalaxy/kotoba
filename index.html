@@ -232,7 +232,16 @@
       <div class="field">
         <label for="cfgEndpoint">エンドポイント</label>
         <input class="box" id="cfgEndpoint" type="text" autocomplete="off" spellcheck="false">
-        <p class="hint">ブラウザから直接叩けない場合は、同梱の proxy.mjs を起動して <code>http://localhost:8787/jev</code> に変えてください。</p>
+        <div class="sheet-actions" style="margin-top:8px">
+          <button class="ghost" id="useRelay" type="button">このサイトの中継を使う</button>
+          <button class="ghost" id="useDirect" type="button">直接つなぐ</button>
+        </div>
+        <p class="hint">
+          ブラウザは他サイトのAPIを直接叩けないことが多く（CORS）、その場合は
+          <strong>このサイトの中継</strong>（<code>/api/jev</code>）を選んでください。
+          Vercel などに置いていれば、これで同一オリジンになり必ず通ります。
+          パソコンで <code>node proxy.mjs</code> を使う場合は <code>http://localhost:8787/jev</code>。
+        </p>
       </div>
       <div class="field">
         <label for="cfgModel">モデル</label>
@@ -278,7 +287,7 @@
   var DAY = 86400000;
 
   /* ============================ 状態 ============================ */
-  var nodes = [], currentTab = "open", openId = null, lastRaw = null;
+  var nodes = [], currentTab = "open", openId = null, lastRaw = null, verified = false;
   var $ = function(id){ return document.getElementById(id); };
   var input=$("input"), send=$("send"), statusEl=$("status"), listEl=$("list"),
       emptyEl=$("empty"), sheet=$("sheet"), sheetBody=$("sheetBody"),
@@ -315,7 +324,8 @@
       });
     } catch(netErr){
       lastRaw = { error:"fetch failed (CORS またはネットワーク)", detail:String(netErr) };
-      var ce = new Error("ブラウザから直接叩けませんでした。proxy.mjs を起動してエンドポイントを差し替えてください。");
+      verified = false; updateEngine();
+      var ce = new Error("ブラウザから直接この宛先を叩けませんでした。設定で「このサイトの中継を使う」に切り替えてください。");
       ce.code = "cors"; throw ce;
     }
 
@@ -326,9 +336,11 @@
 
     if (!res.ok){
       var msg = (json && ((json.error && json.error.message) || json.message)) || text.slice(0,300);
+      verified = false; updateEngine();
       var he = new Error("HTTP " + res.status + " — " + msg);
       he.code = "http_" + res.status; throw he;
     }
+    verified = true; updateEngine();
     return json;
   }
 
@@ -901,12 +913,14 @@
       endpoint: $("cfgEndpoint").value.trim() || DEFAULT_ENDPOINT,
       model: $("cfgModel").value.trim() || DEFAULT_MODEL
     });
+    verified = false;
     updateEngine();
   }
   function updateEngine(){
     var b = $("engine"), has = !!getCfg().key;
-    b.className = "engine " + (has ? "live" : "off");
-    b.textContent = has ? "Jev 接続済み" : "APIキー未設定";
+    if (!has){ b.className = "engine off"; b.textContent = "APIキー未設定"; return; }
+    if (!verified){ b.className = "engine"; b.textContent = "未接続 · 要確認"; return; }
+    b.className = "engine live"; b.textContent = "Jev 接続済み";
   }
   async function probe(){
     saveCfg();
@@ -929,7 +943,7 @@
       p.textContent = e.message || "失敗しました。";
       if (e.code === "cors"){
         var h = document.createElement("p"); h.className = "hint";
-        h.textContent = "同梱の proxy.mjs を `node proxy.mjs` で起動し、エンドポイントを http://localhost:8787/jev に変えてから、もう一度お試しください。";
+        h.textContent = "上の「このサイトの中継を使う」を押してください。このサイトが Vercel などに置かれていれば、それだけで通ります。";
         box.appendChild(h);
       }
     }
@@ -959,6 +973,12 @@
   cfgSheet.addEventListener("click", function(e){ if (e.target === cfgSheet) cfgSheet.hidden = true; });
   $("cfgSave").addEventListener("click", function(){ saveCfg(); cfgSheet.hidden = true; note("保存しました。"); });
   $("cfgTest").addEventListener("click", probe);
+  $("useRelay").addEventListener("click", function(){
+    $("cfgEndpoint").value = "/api/jev"; saveCfg(); probe();
+  });
+  $("useDirect").addEventListener("click", function(){
+    $("cfgEndpoint").value = DEFAULT_ENDPOINT; saveCfg(); probe();
+  });
   $("wipe").addEventListener("click", function(){
     if (!window.confirm("保存されている項目を全部消します。元に戻せません。")) return;
     nodes = []; saveNodes(); render(); cfgSheet.hidden = true;
