@@ -229,7 +229,16 @@
   .sheet h2{font-family:"Shippori Mincho",serif; font-weight:600; font-size:19px; margin:0 0 10px; line-height:1.55; text-wrap:balance}
   .kv{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px}
   .block-label{font-size:11px; letter-spacing:.1em; color:var(--muted); margin:20px 0 8px; font-weight:500}
-  .mat{border-left:2px solid var(--line); padding:2px 0 2px 12px; margin-bottom:12px; font-size:13.5px; color:var(--ink2)}
+  .mat{border-left:2px solid var(--line); padding:2px 0 2px 12px; margin-bottom:12px; font-size:13.5px; color:var(--ink2);
+    white-space:pre-wrap; word-break:break-word}
+  .mat-foot{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:3px}
+  .mat-foot time{margin:0}
+  .copy{flex:none; background:transparent; border:1px solid var(--line); border-radius:99px; padding:3px 11px;
+    font-size:11.5px; color:var(--ink2); white-space:nowrap}
+  .copy:hover{background:var(--surface2)}
+  .copy.ok{border-color:var(--done); color:var(--done)}
+  .label-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:20px 0 8px}
+  .label-row .block-label{margin:0}
   .mat time{display:block; font-size:11px; color:var(--muted); margin-top:3px}
   .concl{background:var(--done-soft); border:1px solid var(--done); border-radius:var(--radius); padding:12px 13px; font-size:14px}
   .concl time{display:block; font-size:11px; color:var(--muted); margin-top:6px}
@@ -1044,13 +1053,20 @@
     }
 
     var ml = document.createElement("p"); ml.className = "block-label";
-    ml.textContent = "材料 " + ((n.materials||[]).length); sheetBody.appendChild(ml);
+    ml.textContent = "材料 " + ((n.materials||[]).length);
+    var mats = (n.materials || []).slice().sort(function(a,b){ return a.at - b.at; });
+    var lr = document.createElement("div"); lr.className = "label-row"; lr.appendChild(ml);
+    if (mats.length > 1) lr.appendChild(copyButton(function(){ return mats.map(function(m){ return m.text; }).join("\n\n"); }, "全部コピー"));
+    sheetBody.appendChild(lr);
 
     if ((n.materials||[]).length){
-      n.materials.slice().sort(function(a,b){ return a.at - b.at; }).forEach(function(m){
+      mats.forEach(function(m){
         var d = document.createElement("div"); d.className = "mat";
         d.appendChild(document.createTextNode(m.text));
-        var t = document.createElement("time"); t.textContent = when(m.at, true) + " · " + ago(m.at); d.appendChild(t);
+        var foot = document.createElement("div"); foot.className = "mat-foot";
+        var t = document.createElement("time"); t.textContent = when(m.at, true) + " · " + ago(m.at); foot.appendChild(t);
+        foot.appendChild(copyButton(function(){ return m.text; }));
+        d.appendChild(foot);
         sheetBody.appendChild(d);
       });
     } else {
@@ -1065,8 +1081,10 @@
     if (n.status === "done" && n.conclusion){
       var c = document.createElement("div"); c.className = "concl";
       c.appendChild(document.createTextNode(n.conclusion));
+      var cf = document.createElement("div"); cf.className = "mat-foot";
       var ct = document.createElement("time"); ct.textContent = "解決 · " + ago(n.conclusionAt || n.updatedAt);
-      c.appendChild(ct); sheetBody.appendChild(c);
+      cf.appendChild(ct); cf.appendChild(copyButton(function(){ return n.conclusion; }));
+      c.appendChild(cf); sheetBody.appendChild(c);
 
       var re = document.createElement("div"); re.className = "sheet-actions";
       var rb = document.createElement("button"); rb.type="button"; rb.className = "ghost"; rb.textContent = "宙ぶらりんに戻す";
@@ -1093,6 +1111,28 @@
     var d = document.createElement("button"); d.type="button"; d.className = "danger"; d.textContent = "削除";
     d.onclick = function(){ remove(n); }; box.appendChild(d);
   }
+  /* クリップボードに入れる。使えない環境では選択してコピーする昔の方法に落とす */
+  async function copyText(text){
+    try { await navigator.clipboard.writeText(text); return true; } catch(e){}
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.fontSize = "16px";
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+      var ok = document.execCommand("copy"); document.body.removeChild(ta); return ok;
+    } catch(e){ return false; }
+  }
+  function copyButton(getText, label){
+    var b = document.createElement("button"); b.type = "button"; b.className = "copy";
+    label = label || "コピー"; b.textContent = label;
+    b.onclick = async function(){
+      var ok = await copyText(getText());
+      b.textContent = ok ? "コピーしました" : "コピーできませんでした";
+      b.classList.toggle("ok", ok);
+      setTimeout(function(){ b.textContent = label; b.classList.remove("ok"); }, 1600);
+    };
+    return b;
+  }
+
   function closeSheet(){ sheet.hidden = true; openId = null; }
 
   /* ============================ 付箋 ============================ */
