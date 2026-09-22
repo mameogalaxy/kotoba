@@ -143,7 +143,10 @@
   .mm-item{background:var(--bg); border:1.5px solid var(--c); justify-content:flex-start; font-weight:500;
     color:var(--ink); color:color-mix(in srgb, var(--c) 66%, var(--ink))}
   .mm-item.note{border-style:dashed}
-  .mm-item.done span::before{content:"✓ "}
+  .mm-item.done .mm-t::before{content:"✓ "}
+  .mm .mm-meta{flex:none; max-width:none; margin-right:8px; font-size:10.5px; font-weight:500; opacity:.8}
+  .mm .mm-t{flex:1}
+  .written{margin:-4px 0 12px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums}
   .mm-more{background:transparent; border:1px dashed var(--line); color:var(--muted); font-size:11px}
   .mm-item.cand{z-index:3; border-width:2px; font-weight:700; font-size:12.5px;
     background:var(--surface); background:color-mix(in srgb, var(--c) 12%, var(--bg));
@@ -569,7 +572,7 @@
       }),
       現在時刻: new Date().toISOString()
     };
-    var res = await jev(state, classifyQuestions(open));
+    var res = await jev(state, Object.assign(classifyQuestions(open), recallQuestions()));
     var a = answersOf(res);
 
     var impIdx   = asScore(a.importance, IMP_LEVELS);
@@ -588,6 +591,7 @@
       isAnswer:   asNoul(a.isAnswer),
       answerOf:   asChoice(a.answerOf),
       answerConf: asConf(a.isAnswer),
+      recall:     readRecall(a, text),
       usage:      res && res.usage
     };
   }
@@ -602,23 +606,174 @@
       過去の項目: cand.map(function(n){
         return { id:n.id, 見出し:n.title, 状態:n.status, 結論:n.conclusion || "" };
       })
-    }, {
+    }, Object.assign({
       thinkingOf: {
         type:"choice",
         instructions:"入力中の人がいま頭に浮かべている可能性が最も高い項目を選ぶ。文字が一致していなくても、同じことを考えているなら選ぶ。",
         criteria: choices
       }
+    }, recallQuestions()));
+    var all = answersOf(res), a = all.thinkingOf;
+    var raw = asDist(a), dist = {};
+    if (raw) Object.keys(raw).forEach(function(k){
+      var n = resolveNode(k); if (n && typeof raw[k] === "number") dist[n.id] = raw[k];
     });
-    var a = answersOf(res).thinkingOf;
-    var dist = asDist(a);
-    if (dist){
-      return Object.keys(dist)
-        .filter(function(k){ return k !== NONE && typeof dist[k] === "number" && dist[k] >= 0.12; })
-        .sort(function(x,y){ return dist[y] - dist[x]; })
-        .slice(0, 2);
+    var ids;
+    if (raw){
+      ids = Object.keys(dist).filter(function(k){ return dist[k] >= 0.12; })
+              .sort(function(x,y){ return dist[y] - dist[x]; }).slice(0, 2);
+    } else {
+      var one = resolveNode(asChoice(a));
+      ids = one ? [one.id] : [];
     }
-    var one = asChoice(a);
-    return (one && one !== NONE) ? [one] : [];
+    return { ids: ids, dist: dist, recall: readRecall(all, text) };
+  }
+
+  /* ============================ いつ書いたか ============================ */
+  var DOW = ["日","月","火","水","木","金","土"];
+  var TODS = ["深夜","早朝","朝","昼","午後","夕方","夜"];
+  var PERIODS = ["今日","昨日","一昨日","今週","先週","今月","先月","もっと前"];
+  var WEEKDAYS = ["月曜","火曜","水曜","木曜","金曜","土曜","日曜"];
+  var TOD_GROUP = { "朝":["早朝","朝"], "夜":["夜","深夜"] };
+  var RECALL_CUE = /書いた|入れた|メモした|残した|記録した|やつ|だっけ|っけ|考えてた|調べてた|思ってた|言ってた|何だった|なんだった/;
+
+  function todOf(h){ return h < 4 ? "深夜" : h < 7 ? "早朝" : h < 11 ? "朝" : h < 14 ? "昼" : h < 17 ? "午後" : h < 19 ? "夕方" : "夜"; }
+  function pad2(n){ return (n < 10 ? "0" : "") + n; }
+  function when(ts, withClock){
+    var d = new Date(ts);
+    return (d.getMonth()+1) + "/" + d.getDate() + "(" + DOW[d.getDay()] + ")"
+      + (withClock ? " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) : "") + " " + todOf(d.getHours());
+  }
+  function whenLong(ts){
+    var d = new Date(ts);
+    return (d.getMonth()+1) + "月" + d.getDate() + "日（" + DOW[d.getDay()] + "）" + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + " · " + todOf(d.getHours());
+  }
+
+  /* 1段目: 「先週の夜」「月曜」「9/15」などの手がかりを手元で読む */
+  function parseTimeLocal(text){
+    var t = String(text || ""), r = { period:null, weekday:null, tod:null, date:null };
+    if (/一昨日|おととい/.test(t)) r.period = "一昨日";
+    else if (/昨日|きのう|昨夜|ゆうべ/.test(t)) r.period = "昨日";
+    else if (/今日|きょう|今朝|今夜|今晩/.test(t)) r.period = "今日";
+    else if (/先週/.test(t)) r.period = "先週";
+    else if (/今週/.test(t)) r.period = "今週";
+    else if (/先月/.test(t)) r.period = "先月";
+    else if (/今月/.test(t)) r.period = "今月";
+    var m = t.match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/);
+    if (m){
+      var d = new Date(); d.setHours(0,0,0,0); d.setMonth(+m[1] - 1, +m[2]);
+      if (d.getTime() > Date.now()) d.setFullYear(d.getFullYear() - 1);
+      r.date = d.getTime();
+    }
+    var nd = t.match(/(\d+)\s*日前/);
+    if (nd){ var d2 = new Date(); d2.setHours(0,0,0,0); r.date = d2.getTime() - (+nd[1]) * DAY; }
+    var w = t.match(/([月火水木金土日])曜/);
+    if (w) r.weekday = "月火水木金土日".indexOf(w[1]);
+    if (/深夜|夜中/.test(t)) r.tod = "深夜";
+    else if (/早朝/.test(t)) r.tod = "早朝";
+    else if (/今朝|朝/.test(t)) r.tod = "朝";
+    else if (/昼/.test(t)) r.tod = "昼";
+    else if (/午後/.test(t)) r.tod = "午後";
+    else if (/夕方/.test(t)) r.tod = "夕方";
+    else if (/昨夜|ゆうべ|今夜|今晩|夜|晩/.test(t)) r.tod = "夜";
+    var dated = r.period || r.date !== null || r.weekday !== null;
+    /* 「夜の撮影」のように中身としての時間語で誤反応しないよう、探す言い回しか短い入力に限る */
+    if (!(RECALL_CUE.test(t) || (dated && t.length <= 10))) return null;
+    return (dated || r.tod) ? r : null;
+  }
+
+  /* 期間の計算はコード側で持つ。Jev には「どれか」を選ばせるだけ */
+  function windowOf(r){
+    if (!r) return null;
+    var now = Date.now(), t0 = new Date(); t0.setHours(0,0,0,0);
+    var today = t0.getTime(), monThis = today - ((t0.getDay() + 6) % 7) * DAY;
+    var from = null, to = null, label = [];
+    if (r.date !== null && r.date !== undefined){ from = r.date; to = r.date + DAY; label.push(when(r.date).split(" ")[0]); }
+    else {
+      switch (r.period){
+        case "今日":   from = today; to = now + 1; break;
+        case "昨日":   from = today - DAY; to = today; break;
+        case "一昨日": from = today - 2*DAY; to = today - DAY; break;
+        case "今週":   from = monThis; to = now + 1; break;
+        case "先週":   from = monThis - 7*DAY; to = monThis; break;
+        case "今月":   { var a = new Date(today); a.setDate(1); from = a.getTime(); to = now + 1; break; }
+        case "先月":   { var b = new Date(today); b.setDate(1); to = b.getTime(); b.setMonth(b.getMonth() - 1); from = b.getTime(); break; }
+        case "もっと前": { var c = new Date(today); c.setDate(1); c.setMonth(c.getMonth() - 1); to = c.getTime(); from = 0; break; }
+      }
+      if (from !== null) label.push(r.period);
+    }
+    var wd = (typeof r.weekday === "number" && r.weekday >= 0 && r.weekday < 7) ? r.weekday : null;
+    if (wd !== null){
+      if (from === null){ from = today - 35*DAY; to = now + 1; }
+      label.push("月火水木金土日".charAt(wd) + "曜");
+    }
+    var tods = r.tod ? (TOD_GROUP[r.tod] || [r.tod]) : null;
+    if (tods) label.push(r.tod);
+    if (from === null && !tods) return null;
+    return {
+      label: label.join(" · "),
+      test: function(ts){
+        if (!ts) return false;
+        if (from !== null && (ts < from || ts >= to)) return false;
+        var d = new Date(ts);
+        if (wd !== null && (d.getDay() + 6) % 7 !== wd) return false;
+        if (tods && tods.indexOf(todOf(d.getHours())) < 0) return false;
+        return true;
+      }
+    };
+  }
+
+  var TIME_WORDS = /一昨日|おととい|昨日|きのう|昨夜|ゆうべ|今日|きょう|今朝|今夜|今晩|先週|今週|先月|今月|\d+\s*日前|\d{1,2}\s*[\/月]\s*\d{1,2}日?|[月火水木金土日]曜日?|深夜|夜中|早朝|午後|夕方|書いた|入れた|メモした|やつ|なんだっけ|何だっけ|だっけ|っけ/g;
+  /* 項目本体か材料のどれかが期間に入っていれば当たり。いちばん新しい当たりの時刻を返す */
+  function matchTime(n, win){
+    var best = 0;
+    if (win.test(n.createdAt)) best = n.createdAt;
+    (n.materials || []).forEach(function(m){ if (win.test(m.at) && m.at > best) best = m.at; });
+    return best;
+  }
+  function recallPick(text, win, dist){
+    var q = bigrams(String(text || "").replace(TIME_WORDS, ""));
+    var out = [];
+    nodes.forEach(function(n){
+      var ts = matchTime(n, win); if (!ts) return;
+      var sc = ((dist && dist[n.id]) || 0) * 2 + (q.size >= 2 ? dice(q, idx(n)) : 0) + ts / 1e14;
+      out.push({ id:n.id, ts:ts, sc:sc });
+    });
+    out.sort(function(a, b){ return b.sc - a.sc; });
+    return out.slice(0, 4);
+  }
+
+  /* 2段目: Jev に「探しものか」「いつのことか」を選ばせる */
+  function optionsOf(list){ return list.concat(["指定なし"]).reduce(function(o, k){ o[k] = null; return o; }, {}); }
+  function recallQuestions(){
+    return {
+      isRecall: { type:"noul",
+        instructions:"この入力は、以前に自分が書いたもの・入れたものを思い出そうとして探している問い合わせか。",
+        criteria:{ "true":"「先週の夜に書いたやつ」「月曜のメモ何だっけ」のように、過去の記録を探している",
+                   "false":"いま新しく考えたこと、書き留めたいこと、調べたいこと" } },
+      period:    { type:"choice", instructions:"探しているものを書いた時期。入力に手がかりがなければ「指定なし」。", criteria: optionsOf(PERIODS) },
+      weekday:   { type:"choice", instructions:"探しているものを書いた曜日。手がかりがなければ「指定なし」。", criteria: optionsOf(WEEKDAYS) },
+      timeOfDay: { type:"choice", instructions:"探しているものを書いた時間帯。手がかりがなければ「指定なし」。", criteria: optionsOf(TODS) }
+    };
+  }
+  function sureChoice(a, min){
+    var c = asChoice(a); if (!c) return null;
+    var d = asDist(a);
+    if (d && typeof d[c] === "number" && d[c] < min) return null;
+    return c;
+  }
+  function readRecall(a, text){
+    var p = sureChoice(a.period, 0.45), w = sureChoice(a.weekday, 0.45), t = sureChoice(a.timeOfDay, 0.45);
+    var r = {
+      isRecall: asNoul(a.isRecall),
+      period: PERIODS.indexOf(p) >= 0 ? p : null,
+      weekday: WEEKDAYS.indexOf(w) >= 0 ? WEEKDAYS.indexOf(w) : null,
+      tod: TODS.indexOf(t) >= 0 ? t : null,
+      date: null
+    };
+    var loc = parseTimeLocal(text);
+    if (loc && loc.date !== null) r.date = loc.date;   /* 「9/15」のような日付は手元で読んだ方が確実 */
+    return r;
   }
 
   /* ============================ スコア ============================ */
@@ -722,7 +877,7 @@
       });
       var bits = [];
       if (n.materials && n.materials.length) bits.push("材料 " + n.materials.length);
-      bits.push(ago(n.updatedAt || n.createdAt));
+      bits.push(when(n.createdAt || n.updatedAt));
       if (isStale(n)) bits.push("結論が古い");
       var mt = document.createElement("span"); mt.textContent = bits.join(" · ");
       sub.appendChild(mt); li.appendChild(sub);
@@ -747,6 +902,9 @@
     sheetBody.textContent = "";
 
     var h = document.createElement("h2"); h.textContent = n.title || "(無題)"; sheetBody.appendChild(h);
+    var wr = document.createElement("p"); wr.className = "written";
+    wr.textContent = "書いた日  " + whenLong(n.createdAt || n.updatedAt);
+    sheetBody.appendChild(wr);
 
     var kv = document.createElement("div"); kv.className = "kv";
     [n.kind, n.context, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")]
@@ -766,7 +924,7 @@
       n.materials.slice().sort(function(a,b){ return a.at - b.at; }).forEach(function(m){
         var d = document.createElement("div"); d.className = "mat";
         d.appendChild(document.createTextNode(m.text));
-        var t = document.createElement("time"); t.textContent = ago(m.at); d.appendChild(t);
+        var t = document.createElement("time"); t.textContent = when(m.at, true) + " · " + ago(m.at); d.appendChild(t);
         sheetBody.appendChild(d);
       });
     } else {
@@ -812,7 +970,8 @@
   function closeSheet(){ sheet.hidden = true; openId = null; }
 
   /* ============================ 付箋 ============================ */
-  var semantic = [], semanticFor = "", lastLocalTop = 0;
+  var semantic = [], semanticFor = "", semanticNote = "", semanticTs = {}, lastLocalTop = 0;
+  var recallState = null;   /* 探しものとして送った結果。次に打ち始めるまで中心に残す */
   var semTimer = null, semInFlight = null;
 
   function bigrams(str){
@@ -848,14 +1007,14 @@
     lastLocalTop = out.length ? out[0].score : 0;
     return out.slice(0,4);
   }
-  function fusenRow(n, why){
+  function fusenRow(n, why, ts){
     var b = document.createElement("button"); b.type = "button";
     b.className = "fusen-item" + (n.status === "done" ? " answered" : "");
     b.dataset.id = n.id;
     var dot = document.createElement("span"); dot.className = "dot " + (n.status||"open"); b.appendChild(dot);
     var t = document.createElement("span"); t.className = "ft"; t.textContent = n.title || "(無題)"; b.appendChild(t);
     var m = document.createElement("span"); m.className = "fm";
-    var bits = [ago(n.updatedAt||n.createdAt)];
+    var bits = [when(ts || n.createdAt)];
     if ((n.materials||[]).length) bits.push("材料" + n.materials.length);
     m.textContent = bits.join(" · "); b.appendChild(m);
     if (n.status === "done" && n.conclusion){
@@ -868,35 +1027,51 @@
   function renderFusen(){
     var text = input.value.trim();
     fusenEl.textContent = "";
-    if (text.length < 2){ lastLocalTop = 0; Mind.highlight([], text, false); return; }
-    var local = localMatches(text), picked = [], seen = {};
-    if (semanticFor === text){
-      semantic.forEach(function(id){
-        var n = find(id);
-        if (n && !seen[id]){ seen[id] = 1; picked.push({ n:n, why:"Jev が意味で拾いました" }); }
-      });
+    if (text.length < 2){
+      lastLocalTop = 0;
+      if (!text && recallState){ showPicked(recallState.picked, recallState.text, recallState.note); return; }
+      Mind.highlight([], text, false); return;
     }
-    local.forEach(function(r){
-      if (seen[r.n.id] || picked.length >= 3) return;
-      seen[r.n.id] = 1; picked.push({ n:r.n, why:"" });
-    });
-    Mind.highlight(picked.map(function(x){ return x.n.id; }), text, !!semInFlight);
+    var picked = [], seen = {}, note = "";
+    function add(n, why, ts){ if (n && !seen[n.id]){ seen[n.id] = 1; picked.push({ n:n, why:why, ts:ts || 0 }); } }
+
+    if (semanticFor === text){
+      note = semanticNote;
+      semantic.forEach(function(id){ add(find(id), note || "Jev が意味で拾いました", semanticTs[id]); });
+    }
+    if (!note && !picked.length){
+      var win = windowOf(parseTimeLocal(text));
+      if (win){
+        note = win.label;
+        recallPick(text, win, null).forEach(function(r){ add(find(r.id), win.label, r.ts); });
+      }
+    }
+    if (!note){
+      localMatches(text).forEach(function(r){ if (picked.length < 3) add(r.n, "", 0); });
+    }
+    showPicked(picked, text, note);
+  }
+
+  function showPicked(picked, text, note){
+    var meta = {};
+    picked.forEach(function(x){ meta[x.n.id] = when(x.ts || x.n.createdAt); });
+    Mind.highlight(picked.map(function(x){ return x.n.id; }), text, !!semInFlight, note, meta);
     if (view === "map" || !picked.length) return;
 
     var head = document.createElement("div"); head.className = "fusen-head";
-    head.appendChild(document.createTextNode(
-      picked.some(function(x){ return x.n.status === "done"; }) ? "その件、もう結論が出ています" : "関係ありそうなこと"));
+    head.appendChild(document.createTextNode(note ? note + " に書いたもの"
+      : picked.some(function(x){ return x.n.status === "done"; }) ? "その件、もう結論が出ています" : "関係ありそうなこと"));
     if (semInFlight){
       var pl = document.createElement("span"); pl.className = "pulse"; head.appendChild(pl);
       head.appendChild(document.createTextNode("Jev に聞いています"));
     }
     fusenEl.appendChild(head);
-    picked.slice(0,3).forEach(function(x){ fusenEl.appendChild(fusenRow(x.n, x.why)); });
+    picked.slice(0, 4).forEach(function(x){ fusenEl.appendChild(fusenRow(x.n, x.why, x.ts)); });
   }
   function scheduleSemantic(){
     clearTimeout(semTimer);
     var text = input.value.trim();
-    if (!getCfg().key || text.length < 6 || nodes.length === 0) return;
+    if (!getCfg().key || text.length < 4 || nodes.length === 0) return;
     /* Jev は 70〜500ms・0.0001円なので、止まってすぐ投げてよい */
     semTimer = setTimeout(function(){
       if (semanticFor === text || semInFlight) return;
@@ -908,16 +1083,25 @@
     if (!cand.length) return;
     semInFlight = text; renderFusen();
     try {
-      var ids = await rank(text, cand);
-      var resolved = ids.map(function(x){ var n = resolveNode(x); return n && n.id; }).filter(Boolean);
-      if (input.value.trim() === text){ semantic = resolved; semanticFor = text; }
+      var res = await rank(text, cand), ids = res.ids, noteText = "", tsById = {};
+      var rec = res.recall;
+      if (rec.isRecall !== null && rec.isRecall >= 0.5){
+        var win = windowOf(rec) || windowOf(parseTimeLocal(text));
+        if (win){
+          noteText = win.label;
+          ids = recallPick(text, win, res.dist).map(function(r){ tsById[r.id] = r.ts; return r.id; });
+        }
+      }
+      if (input.value.trim() === text){
+        semantic = ids; semanticFor = text; semanticNote = noteText; semanticTs = tsById;
+      }
     } catch(e){ /* 1段目だけで機能は成立する */ }
     finally { semInFlight = null; renderFusen(); }
   }
   function clearFusen(){
     input.style.height = "";
     clearTimeout(semTimer);
-    semantic = []; semanticFor = ""; lastLocalTop = 0; semInFlight = null;
+    semantic = []; semanticFor = ""; semanticNote = ""; semanticTs = {}; lastLocalTop = 0; semInFlight = null;
     fusenEl.textContent = ""; Mind.highlight([], "", false);
   }
 
@@ -966,6 +1150,32 @@
     }
     refreshRaw();
 
+    var rec = r.recall;
+    if (rec && rec.isRecall !== null && rec.isRecall >= 0.6){
+      var win = windowOf(rec) || windowOf(parseTimeLocal(text)), picked = [];
+      if (win) recallPick(text, win, null).forEach(function(x){ var n = find(x.id); if (n) picked.push({ n:n, why:win.label, ts:x.ts }); });
+      else localMatches(text).slice(0, 3).forEach(function(x){ picked.push({ n:x.n, why:"", ts:0 }); });
+      input.value = ""; clearFusen();
+      recallState = { text:text, note: win ? win.label : "", picked:picked };
+      renderFusen();
+      noteRecall(text, r, picked.length);
+      send.disabled = false; return;
+    }
+
+    saveClassified(text, r);
+    input.value = ""; clearFusen(); send.disabled = false;
+  }
+
+  function noteRecall(text, r, count){
+    statusEl.hidden = false; statusEl.className = "status"; statusEl.textContent = "";
+    statusEl.appendChild(document.createTextNode(
+      (count ? "探しものとして扱いました（" + count + "件）。" : "探しものとして扱いましたが、見つかりませんでした。") + "保存はしていません。 "));
+    var b = document.createElement("button"); b.type = "button"; b.textContent = "メモとして保存する";
+    b.onclick = function(){ recallState = null; statusEl.hidden = true; saveClassified(text, r); renderFusen(); };
+    statusEl.appendChild(b);
+  }
+
+  function saveClassified(text, r){
     var t = Date.now();
     var target = (r.isMaterial !== null && r.isMaterial >= 0.5) ? resolveNode(r.materialOf) : null;
     var answerTo = (r.isAnswer !== null && r.isAnswer >= 0.5) ? resolveNode(r.answerOf) : null;
@@ -993,8 +1203,6 @@
     }
 
     if (answerTo && answerTo.status === "open") showNeuron(answerTo, r.isAnswer, text);
-
-    input.value = ""; clearFusen(); send.disabled = false;
   }
   function pct(label, p){
     return (typeof p === "number") ? "（" + label + " " + Math.round(p*100) + "%）" : "";
@@ -1091,7 +1299,7 @@
 
     var wrap, stage, wires, hubEl, blobs = {};
     var els = {}, links = [], expanded = {};
-    var sig = "", cands = [], candKey = "", typed = "", busy = false;
+    var sig = "", cands = [], candKey = "", typed = "", busy = false, hubNote = "", metaById = {};
     var ready = false, laidOut = false, timer = null, rafId = null, wireUntil = 0;
     var hub = { x:0, y:0, d:0, top:0 }, lastH = 0;
 
@@ -1123,7 +1331,7 @@
 
     function renderHub(){
       var open = nodes.filter(function(n){ return n.status === "open"; }).length;
-      var key = typed + "|" + cands.length + "|" + busy + "|" + nodes.length + "|" + open;
+      var key = typed + "|" + cands.length + "|" + busy + "|" + hubNote + "|" + nodes.length + "|" + open;
       if (hubEl._key === key) return;
       hubEl._key = key;
       hubEl.textContent = "";
@@ -1135,14 +1343,16 @@
       svg.appendChild(path); hubEl.appendChild(svg);
 
       var cap = document.createElement("div"); cap.className = "hub-cap";
-      cap.textContent = typed ? "いま考えていること" : "頭の中";
+      cap.textContent = hubNote ? "探しているもの" : typed ? "いま考えていること" : "頭の中";
       hubEl.appendChild(cap);
 
       var inn = document.createElement("div"); inn.className = "hub-in";
       if (typed){
         var t = document.createElement("div"); t.className = "hub-typed"; t.textContent = typed; inn.appendChild(t);
         var s1 = document.createElement("div"); s1.className = "hub-sub";
-        s1.textContent = busy ? "Jev が探しています" : (cands.length ? "近いもの " + cands.length + "件" : "近いものなし");
+        s1.textContent = busy ? "Jev が探しています"
+          : hubNote ? hubNote + " · " + (cands.length ? cands.length + "件" : "なし")
+          : (cands.length ? "近いもの " + cands.length + "件" : "近いものなし");
         inn.appendChild(s1);
       } else {
         inn.appendChild(bulb());
@@ -1261,7 +1471,7 @@
         var color = colorOf(catOf(n)), k = "i:" + n.id;
         want[k] = { kind:"item", cand:true, x:(W - candW)/2, y:cy2, w:candW, h:candRow, c:color,
                     text: (n.title || "(無題)") + (n.status === "done" && n.conclusion ? "  →  " + n.conclusion : ""),
-                    id:n.id, status:n.status || "open", op:1 };
+                    id:n.id, status:n.status || "open", op:1, meta: metaById[n.id] || when(n.createdAt) };
         links.push({ from:"hub", to:k, c:color, kind:"cand" });
         cy2 += candRow + candGap;
       });
@@ -1294,7 +1504,8 @@
         var sp = want[key], el = els[key];
         if (!el){
           el = document.createElement("button"); el.type = "button";
-          el.appendChild(document.createElement("span"));
+          var ms = document.createElement("span"); ms.className = "mm-meta"; el.appendChild(ms);
+          var ts2 = document.createElement("span"); ts2.className = "mm-t"; el.appendChild(ts2);
           stage.appendChild(el); els[key] = el;
           if (!quiet){
             /* 新しい項目は中心から芽を出す */
@@ -1307,8 +1518,10 @@
         }
         el.className = cls(sp);
         el.style.setProperty("--c", sp.c);
-        el.firstChild.textContent = sp.text;
-        el.title = sp.text; el.setAttribute("aria-label", sp.text);
+        el.children[0].textContent = sp.meta || ""; el.children[0].hidden = !sp.meta;
+        el.children[1].textContent = sp.text;
+        el.title = (sp.meta ? sp.meta + "  " : "") + sp.text;
+        el.setAttribute("aria-label", el.title);
         el.dataset.id = sp.id || ""; el.dataset.cat = sp.cat || "";
         el.style.width = sp.w + "px"; el.style.height = sp.h + "px";
         el.style.transform = "translate(" + Math.round(sp.x) + "px," + Math.round(sp.y) + "px)";
@@ -1400,7 +1613,10 @@
           if (b.dataset.id){ openSheet(b.dataset.id); return; }
           if (b.dataset.cat){ expanded[b.dataset.cat] = !expanded[b.dataset.cat]; layout(true); return; }
         }
-        if (e.target.closest(".hub")) input.focus();
+        if (e.target.closest(".hub")){
+          if (recallState){ recallState = null; renderFusen(); }
+          input.focus();
+        }
       });
       var rt = null;
       window.addEventListener("resize", function(){
@@ -1420,13 +1636,15 @@
         if (!force && ns === sig) return;
         sig = ns; layout(laidOut);
       },
-      highlight: function(ids, text, isBusy){
+      highlight: function(ids, text, isBusy, note, meta){
         typed = String(text || "").trim();
         busy = !!isBusy;
+        hubNote = note || "";
+        metaById = meta || {};
         if (!ready) return;
         renderHub();
         var list = (ids || []).filter(function(id){ return !!find(id); }).slice(0, 4);
-        var key = list.join(",");
+        var key = list.join(",") + "|" + hubNote;
         if (key === candKey) return;
         candKey = key;
         clearTimeout(timer);
@@ -1472,7 +1690,10 @@
     vv.addEventListener("scroll", function(){ window.scrollTo(0, 0); });
     fit();
   })();
-  input.addEventListener("input", function(){ renderFusen(); scheduleSemantic(); });
+  input.addEventListener("input", function(){
+    if (recallState && input.value.trim()) recallState = null;
+    renderFusen(); scheduleSemantic();
+  });
   input.addEventListener("keydown", function(e){
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter"){ e.preventDefault(); capture(); }
   });
