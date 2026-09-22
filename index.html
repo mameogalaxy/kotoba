@@ -45,7 +45,6 @@
   html,body{height:100%; overflow:hidden}
   body{
     margin:0; background:var(--bg); color:var(--ink);
-    padding-top:env(safe-area-inset-top,0px);
     font-family:"Noto Sans JP", system-ui, -apple-system, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
     font-size:15px; line-height:1.7; -webkit-font-smoothing:antialiased;
   }
@@ -54,7 +53,11 @@
   a{color:var(--accent)}
   :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
 
-  #app{display:flex; flex-direction:column; height:var(--app-h, 100%); max-width:660px; margin:0 auto; padding:0 16px}
+  /* 見えている範囲（visualViewport）にぴったり重ねる。iOS がキーボード表示時に
+     画面をずらしても、アプリ自体がそれに追従するので白い部分が出ない */
+  #app{position:fixed; top:0; left:0; right:0; display:flex; flex-direction:column;
+    height:var(--app-h, 100%); transform:translateY(var(--app-y, 0px));
+    max-width:660px; margin:0 auto; padding:env(safe-area-inset-top,0px) 16px 0}
 
   .top{background:var(--bg); padding-block:14px 0; flex:none}
   .brand{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
@@ -71,8 +74,8 @@
   .composer{display:flex; align-items:flex-end; gap:6px; background:var(--surface);
     border:1px solid var(--line); border-radius:24px; padding:5px 5px 5px 6px}
   .composer:focus-within{border-color:var(--accent)}
-  #input{flex:1; min-width:0; border:0; background:transparent; resize:none; font:inherit; font-size:15px;
-    color:var(--ink); line-height:1.55; min-height:0; max-height:140px; overflow-y:auto; outline:none; padding:7px 4px}
+  #input{flex:1; min-width:0; border:0; background:transparent; resize:none; font:inherit; font-size:16px;
+    color:var(--ink); line-height:1.5; min-height:0; max-height:140px; overflow-y:auto; outline:none; padding:7px 4px}
   #input::placeholder{color:var(--muted)}
   .composer .primary{padding:8px 16px; flex:none}
   .composer .mic{flex:none; border-color:transparent; padding:7px 10px}
@@ -146,6 +149,10 @@
   .mm-item.done .mm-t::before{content:"✓ "}
   .mm .mm-meta{flex:none; max-width:none; margin-right:8px; font-size:10.5px; font-weight:500; opacity:.8}
   .mm .mm-t{flex:1}
+  .ctx-btn{cursor:pointer; border-color:var(--accent); color:var(--accent)}
+  .ctx-picker{display:flex; flex-wrap:wrap; gap:6px; margin:-8px 0 16px; padding:10px; border:1px dashed var(--line); border-radius:12px}
+  .ctx-picker .chip{cursor:pointer}
+  .ctx-picker .chip.on{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
   .written{margin:-4px 0 12px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums}
   .mm-more{background:transparent; border:1px dashed var(--line); color:var(--muted); font-size:11px}
   .mm-item.cand{z-index:3; border-width:2px; font-weight:700; font-size:12.5px;
@@ -210,7 +217,7 @@
     border:1px solid var(--line); border-radius:var(--radius); padding:10px 12px; outline:none;
   }
   textarea.box{min-height:70px; resize:vertical}
-  input.box{font-size:13px}
+  input.box, textarea.box, select.box{font-size:16px}
   textarea.box:focus, input.box:focus{border-color:var(--accent)}
   .sheet-actions{display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap}
   .danger{background:transparent; border:0; color:var(--muted); font-size:12px; text-decoration:underline; padding:6px 0}
@@ -246,7 +253,6 @@
         <button data-tab="note" type="button">メモ <span class="n" id="nNote"></span></button>
       </nav>
       <div class="legend" id="legend" hidden>
-        <span><i class="lg cat"></i>文脈</span>
         <span><i class="lg"></i>宙ぶらりん</span>
         <span>✓ 解決済み</span>
         <span><i class="lg note"></i>メモ</span>
@@ -276,7 +282,7 @@
     <p class="status" id="status" hidden></p>
     <div class="composer">
       <button class="ghost mic" id="mic" type="button" hidden aria-pressed="false">音声</button>
-      <textarea id="input" rows="1" placeholder="いま頭にあることを、そのまま" aria-label="放り込む内容"></textarea>
+      <textarea id="input" rows="1" placeholder="いま頭にあること" aria-label="放り込む内容"></textarea>
       <button class="primary" id="send" type="button">入れる</button>
     </div>
   </div>
@@ -320,11 +326,16 @@
       </div>
       <div class="field">
         <label for="cfgContexts">枝の分け方</label>
-        <textarea class="box" id="cfgContexts" rows="2" spellcheck="false" style="min-height:0"></textarea>
+        <textarea class="box" id="cfgContexts" rows="8" spellcheck="false"></textarea>
         <p class="hint">
-          マップの色つきの枝になる分類です。Jev は入れたものを、この中から1つ選んで振り分けます。
-          読点かカンマで区切って、11個まで。当てはまらないものは自動で「その他」に入ります。
+          マップの色つきの枝になる分類です。Jev は入れたものを、この説明と見比べて1つ選びます。
+          1行に1つ、<code>名前：どんなものが入るか</code> の形で、11個まで。
+          説明を具体的に書くほど、振り分けが正確になります。当てはまらないものは「その他」に入ります。
         </p>
+        <div class="sheet-actions" style="margin-top:8px">
+          <button class="ghost" id="reclassify" type="button">今ある項目を振り分け直す</button>
+          <span class="hint" id="reclassifyNote" style="margin:0"></span>
+        </div>
       </div>
       <div class="field">
         <label for="cfgModel">モデル</label>
@@ -358,6 +369,18 @@
   /* ============================ 定数 ============================ */
   var KINDS     = ["疑問","調べかけ","アイデア","タスク","事実メモ","買いたい"];
   var DEFAULT_CONTEXTS = ["仕事","副業","お金","健康","人間関係","趣味","学び","生活"];
+  /* Jev には名前だけでなく「何が入る枝か」を渡す。名前だけだと判断材料がない */
+  var DEFAULT_HINTS = {
+    "仕事":"本業・勤務先の業務、研修、会議、営業、職場の人とのやりとり",
+    "副業":"本業以外で稼ぐ活動。ネット販売（TikTok Shop など）、商品、撮影、動画の作り方、売上",
+    "お金":"家計、支払い、貯金、投資、税金、ポイント活動（ポイ活・ウエル活など）",
+    "健康":"体調、病院、薬、運動、睡眠、食事",
+    "人間関係":"家族・友人・恋人への連絡や約束、贈り物、付き合い",
+    "趣味":"遊び、好きなこと、スポーツ、ゲーム、娯楽",
+    "学び":"勉強、資格、読書、身につけたいこと",
+    "生活":"家事、買い物、日用品、住まい、工事や修理、役所の手続き"
+  };
+  var CONTEXT_HINTS = Object.assign({}, DEFAULT_HINTS);
   var CONTEXTS = DEFAULT_CONTEXTS.concat(["その他"]);
   var BRANCH_COLORS = ["#e8605c","#4aa8d4","#4fae80","#ee9150","#8a6ad0","#de6fa0","#c9a227","#4f9e9a","#7d8fd6","#c77a4f","#6aa84f"];
   var IMP_LEVELS   = ["どうでもいい","少し気になる","そこそこ大事","かなり大事","最優先"];
@@ -385,19 +408,34 @@
     try { return Object.assign(d, JSON.parse(localStorage.getItem(CFG_KEY) || "{}")); }
     catch(e){ return d; }
   }
+  /* 1行に1つ、「名前：説明」。説明は省略できる。
+     「：」を使っていなければ、読点やカンマ区切りの名前だけの並びとして読む */
   function parseContexts(text){
-    var seen = {}, out = [];
-    String(text || "").split(/[,、，\n]+/).forEach(function(w){
-      w = w.trim();
-      if (!w || w === "その他" || seen[w]) return;
-      seen[w] = 1; out.push(w.slice(0, 12));
+    var src = String(text || ""), withHints = /[：:]/.test(src);
+    var parts = src.split(withHints ? /\n+/ : /[,、，\n]+/);
+    var seen = {}, names = [], hints = {};
+    parts.forEach(function(line){
+      var m = line.match(/^\s*([^：:]+?)\s*(?:[：:]\s*(.*))?$/);
+      if (!m) return;
+      var name = m[1].trim().slice(0, 12), hint = (m[2] || "").trim().slice(0, 80);
+      if (!name || name === "その他" || seen[name]) return;
+      seen[name] = 1; names.push(name);
+      if (hint) hints[name] = hint;
     });
-    return out.slice(0, 11);
+    return { names: names.slice(0, 11), hints: hints };
   }
   function loadContexts(){
-    var c = getCfg().contexts;
-    var list = (Array.isArray(c) && c.length) ? c.slice(0, 11) : DEFAULT_CONTEXTS.slice();
+    var c = getCfg();
+    var list = (Array.isArray(c.contexts) && c.contexts.length) ? c.contexts.slice(0, 11) : DEFAULT_CONTEXTS.slice();
     CONTEXTS = list.concat(["その他"]);
+    CONTEXT_HINTS = (c.contextHints && typeof c.contextHints === "object") ? c.contextHints : Object.assign({}, DEFAULT_HINTS);
+  }
+  function contextCriteria(){
+    var o = {};
+    CONTEXTS.forEach(function(k){
+      o[k] = k === "その他" ? "上のどれにもはっきり当てはまらない" : (CONTEXT_HINTS[k] || null);
+    });
+    return o;
   }
   function setCfg(c){ try { localStorage.setItem(CFG_KEY, JSON.stringify(c)); } catch(e){} }
 
@@ -526,8 +564,8 @@
       },
       context: {
         type:"choice",
-        instructions:"この断片が属する生活上の文脈を選ぶ。",
-        criteria: CONTEXTS.reduce(function(o,k){ o[k]=null; return o; }, {})
+        instructions:"この断片の内容そのものが、どの分類の説明に最もよく当てはまるかを選ぶ。ほかの項目の分類には引きずられない。",
+        criteria: contextCriteria()
       },
       importance: {
         type:"score",
@@ -568,7 +606,7 @@
     var state = {
       断片: text,
       既存の未解決の問い: open.map(function(n){
-        return { id:n.id, 見出し:n.title, 種類:n.kind, 文脈:n.context, 材料数:(n.materials||[]).length };
+        return { id:n.id, 見出し:n.title };
       }),
       現在時刻: new Date().toISOString()
     };
@@ -907,9 +945,27 @@
     sheetBody.appendChild(wr);
 
     var kv = document.createElement("div"); kv.className = "kv";
-    [n.kind, n.context, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")]
+    var curCtx = CONTEXTS.indexOf(n.context) >= 0 ? n.context : "その他";
+    var ctxBtn = document.createElement("button"); ctxBtn.type = "button";
+    ctxBtn.className = "chip ctx-btn"; ctxBtn.textContent = curCtx + " ▾";
+    ctxBtn.setAttribute("aria-label", "枝を変える（いま: " + curCtx + "）");
+    kv.appendChild(ctxBtn);
+    var picker = document.createElement("div"); picker.className = "ctx-picker"; picker.hidden = true;
+    CONTEXTS.forEach(function(k){
+      var b = document.createElement("button"); b.type = "button";
+      b.className = "chip" + (k === curCtx ? " on" : ""); b.textContent = k;
+      b.onclick = function(){
+        n.context = k; saveNodes(); render();
+        ctxBtn.textContent = k + " ▾"; picker.hidden = true;
+        Array.prototype.forEach.call(picker.children, function(x){ x.classList.toggle("on", x === b); });
+      };
+      picker.appendChild(b);
+    });
+    ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
+    [n.kind, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")]
       .forEach(function(t){ var c=document.createElement("span"); c.className="chip"; c.textContent=t; kv.appendChild(c); });
     sheetBody.appendChild(kv);
+    sheetBody.appendChild(picker);
 
     if (isStale(n)){
       var st = document.createElement("div"); st.className = "stale";
@@ -1235,7 +1291,8 @@
     $("cfgKey").value = c.key || "";
     $("cfgEndpoint").value = c.endpoint || DEFAULT_ENDPOINT;
     $("cfgModel").value = c.model || DEFAULT_MODEL;
-    $("cfgContexts").value = CONTEXTS.filter(function(x){ return x !== "その他"; }).join("、");
+    $("cfgContexts").value = CONTEXTS.filter(function(x){ return x !== "その他"; })
+      .map(function(k){ return CONTEXT_HINTS[k] ? k + "：" + CONTEXT_HINTS[k] : k; }).join("\n");
     $("probe").textContent = ""; refreshRaw();
     cfgSheet.hidden = false;
   }
@@ -1245,7 +1302,8 @@
       key: $("cfgKey").value.trim(),
       endpoint: $("cfgEndpoint").value.trim() || DEFAULT_ENDPOINT,
       model: $("cfgModel").value.trim() || DEFAULT_MODEL,
-      contexts: ctx.length ? ctx : DEFAULT_CONTEXTS.slice()
+      contexts: ctx.names.length ? ctx.names : DEFAULT_CONTEXTS.slice(),
+      contextHints: ctx.names.length ? ctx.hints : Object.assign({}, DEFAULT_HINTS)
     });
     loadContexts();
     render();
@@ -1258,6 +1316,33 @@
     if (!verified){ b.className = "engine"; b.textContent = "未接続 · 要確認"; return; }
     b.className = "engine live"; b.textContent = "Jev 接続済み";
   }
+  var reclassifying = false;
+  async function reclassifyAll(){
+    if (reclassifying) return;
+    saveCfg();
+    var noteEl = $("reclassifyNote"), btn = $("reclassify");
+    if (!getCfg().key){ noteEl.textContent = "先にAPIキーを入れてください。"; return; }
+    reclassifying = true; btn.disabled = true;
+    var list = nodes.slice(), moved = 0, failed = 0;
+    for (var i = 0; i < list.length; i++){
+      var n = list[i];
+      noteEl.textContent = "振り分け直しています " + (i + 1) + " / " + list.length;
+      try {
+        var body = [n.title].concat((n.materials || []).slice(0, 3).map(function(m){ return m.text; })).join("\n");
+        var res = await jev({ 断片: body }, { context: {
+          type:"choice",
+          instructions:"この断片の内容そのものが、どの分類の説明に最もよく当てはまるかを選ぶ。",
+          criteria: contextCriteria()
+        }});
+        var c = asChoice(answersOf(res).context);
+        if (c && CONTEXTS.indexOf(c) >= 0 && c !== n.context){ n.context = c; moved++; }
+      } catch(e){ failed++; if (e.code === "cors" || e.code === "no_key") break; }
+    }
+    saveNodes(); render();
+    noteEl.textContent = moved + "件の枝を変えました" + (failed ? "（" + failed + "件は失敗）" : "") + "。";
+    reclassifying = false; btn.disabled = false;
+  }
+
   async function probe(){
     saveCfg();
     var box = $("probe"); box.className = "probe"; box.textContent = "";
@@ -1431,7 +1516,7 @@
       ORDER.forEach(function(q){
         var left = q.charAt(1) === "L", top = q.charAt(0) === "T";
         var x0 = left ? leftX : rightX;
-        var cur = top ? topBottom : botTop;
+        var cur = top ? topBottom : botTop, tail = null;
         Q[q].forEach(function(c, ci){
           if (ci) cur += top ? -blockGap : blockGap;
           var color = colorOf(c.name);
@@ -1439,7 +1524,7 @@
           var ck = "c:" + c.name;
           want[ck] = { kind:"cat", x: left ? x0 + colW - catW : x0, y:cy, w:catW, h:catH, c:color,
                        text: c.name + "  " + c.items.length, cat:c.name, op: focus ? 0.45 : 1 };
-          links.push({ from:"hub", to:ck, c:color, kind:"cat" });
+          links.push({ from: tail || "hub", to:ck, c:color, kind: tail ? "item" : "cat" });
           cur = top ? cy - rowGap : cy + catH + rowGap;
           var prev = ck;
 
@@ -1462,6 +1547,7 @@
             cur = top ? my - rowGap : my + itemH + rowGap;
           }
           cur += top ? rowGap : -rowGap;
+          tail = want["m:" + c.name] ? "m:" + c.name : prev;
         });
       });
 
@@ -1677,17 +1763,15 @@
   /* iOS はキーボードが出ても画面の高さを変えないので、見えている高さに合わせて組み直す */
   (function(){
     var vv = window.visualViewport; if (!vv) return;
-    var last = 0;
+    var lastH = 0, root = document.documentElement;
     function fit(){
-      var h = Math.round(vv.height);
-      if (h === last) return;
-      last = h;
-      document.documentElement.style.setProperty("--app-h", h + "px");
-      window.scrollTo(0, 0);
-      if (view === "map") Mind.refresh();
+      var h = Math.round(vv.height), y = Math.max(0, Math.round(vv.offsetTop));
+      root.style.setProperty("--app-h", h + "px");
+      root.style.setProperty("--app-y", y + "px");
+      if (h !== lastH){ lastH = h; if (view === "map") Mind.refresh(); }
     }
     vv.addEventListener("resize", fit);
-    vv.addEventListener("scroll", function(){ window.scrollTo(0, 0); });
+    vv.addEventListener("scroll", fit);
     fit();
   })();
   input.addEventListener("input", function(){
@@ -1715,6 +1799,7 @@
   $("cfgSave").addEventListener("click", function(){ saveCfg(); cfgSheet.hidden = true; note("保存しました。"); });
   $("viewToggle").addEventListener("click", function(){ setView(view === "map" ? "list" : "map"); });
   $("cfgTest").addEventListener("click", probe);
+  $("reclassify").addEventListener("click", reclassifyAll);
   $("useRelay").addEventListener("click", function(){
     $("cfgEndpoint").value = "/api/jev"; saveCfg(); probe();
   });
