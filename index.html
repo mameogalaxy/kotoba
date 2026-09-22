@@ -117,6 +117,19 @@
   .tabs button.on{color:var(--ink); border-bottom-color:var(--accent); font-weight:500}
   .tabs .n{font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums}
 
+  .viewbar{display:flex; align-items:center; gap:8px; padding-block:14px 8px; border-bottom:1px solid var(--line)}
+  .viewbar .tabs{border:0; padding:0; flex:1}
+  .legend{display:flex; gap:12px; flex:1; align-items:center; font-size:11px; color:var(--muted); flex-wrap:wrap}
+  .legend i{display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle}
+  .viewbtn{background:transparent; border:1px solid var(--line); border-radius:99px; padding:4px 12px; font-size:11.5px; color:var(--ink2); white-space:nowrap}
+  .viewbtn:hover{background:var(--surface2)}
+
+  .mapwrap{flex:1; position:relative; overflow:hidden; margin:0 -16px}
+  #map{display:block; width:100%; height:100%; touch-action:manipulation}
+  .maphint{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    margin:0; width:min(280px, 78%); text-align:center; font-size:12.5px; color:var(--muted); line-height:1.9;
+  }
   .scroll{flex:1; overflow-y:auto; padding-bottom:40px}
   ul.list{list-style:none; margin:0; padding:0}
   .node{padding:14px 2px; border-bottom:1px solid var(--line); cursor:pointer;
@@ -199,14 +212,27 @@
     <div id="judgeBox"></div>
     <div id="neuronBox"></div>
 
-    <nav class="tabs" id="tabs">
-      <button data-tab="open" class="on" type="button">宙ぶらりん <span class="n" id="nOpen"></span></button>
-      <button data-tab="done" type="button">解決済み <span class="n" id="nDone"></span></button>
-      <button data-tab="note" type="button">メモ <span class="n" id="nNote"></span></button>
-    </nav>
+    <div class="viewbar">
+      <nav class="tabs" id="tabs">
+        <button data-tab="open" class="on" type="button">宙ぶらりん <span class="n" id="nOpen"></span></button>
+        <button data-tab="done" type="button">解決済み <span class="n" id="nDone"></span></button>
+        <button data-tab="note" type="button">メモ <span class="n" id="nNote"></span></button>
+      </nav>
+      <div class="legend" id="legend" hidden>
+        <span><i style="background:var(--open)"></i>宙ぶらりん</span>
+        <span><i style="background:var(--done)"></i>解決済み</span>
+        <span><i style="background:var(--muted)"></i>メモ</span>
+      </div>
+      <button class="viewbtn" id="viewToggle" type="button">リストで見る</button>
+    </div>
   </div>
 
-  <div class="scroll">
+  <div class="mapwrap" id="mapView">
+    <canvas id="map"></canvas>
+    <p class="maphint" id="mapHint" hidden></p>
+  </div>
+
+  <div class="scroll" id="listView" hidden>
     <p class="section-note" id="sectionNote"></p>
     <ul class="list" id="list"></ul>
     <p class="empty" id="empty" hidden></p>
@@ -639,6 +665,7 @@
       listEl.appendChild(li);
     });
 
+    if (typeof Mind !== "undefined"){ Mind.build(false); updateMapHint(); }
     emptyEl.hidden = items.length > 0;
     if (!items.length){
       emptyEl.textContent = nodes.length === 0
@@ -777,7 +804,7 @@
   function renderFusen(){
     var text = input.value.trim();
     fusenEl.textContent = "";
-    if (text.length < 2){ lastLocalTop = 0; return; }
+    if (text.length < 2){ lastLocalTop = 0; Mind.highlight([]); return; }
     var local = localMatches(text), picked = [], seen = {};
     if (semanticFor === text){
       semantic.forEach(function(id){
@@ -789,6 +816,7 @@
       if (seen[r.n.id] || picked.length >= 3) return;
       seen[r.n.id] = 1; picked.push({ n:r.n, why:"" });
     });
+    Mind.highlight(picked.map(function(x){ return x.n.id; }));
     if (!picked.length) return;
 
     var head = document.createElement("div"); head.className = "fusen-head";
@@ -825,7 +853,7 @@
   function clearFusen(){
     clearTimeout(semTimer);
     semantic = []; semanticFor = ""; lastLocalTop = 0; semInFlight = null;
-    fusenEl.textContent = "";
+    fusenEl.textContent = ""; Mind.highlight([]);
   }
 
   /* ============================ 投入 ============================ */
@@ -1028,6 +1056,336 @@
     refreshRaw();
   }
 
+  /* ============================ マインドマップ ============================ */
+  /* 中心は「いまの自分」。いま度が高いものほど中心に寄り、
+     鮮度が落ちたものは薄くなって外へ流れていく。          */
+  var Mind = (function(){
+    var cv, ctx, raf = null, W = 0, H = 0, DPR = 1;
+    var ents = [], byId = {}, rel = [], sig = "", col = {};
+    var hi = {}, motionOK = true, dragging = null, moved = false;
+
+    function css(name){
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+    function readColors(){
+      col = {
+        open: css("--open") || "#b06a15",
+        done: css("--done") || "#3a7358",
+        note: css("--muted") || "#6b7686",
+        line: css("--line") || "#e2e6ec",
+        accent: css("--accent") || "#2f5d8c",
+        ink: css("--ink") || "#14181f",
+        muted: css("--muted") || "#6b7686"
+      };
+    }
+    function resize(){
+      if (!cv) return;
+      var r = cv.parentNode.getBoundingClientRect();
+      W = Math.max(120, r.width); H = Math.max(120, r.height);
+      DPR = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+
+    function signature(){
+      return nodes.map(function(n){
+        return n.id + ":" + (n.updatedAt||0) + ":" + ((n.materials||[]).length) + ":" + n.status;
+      }).join("|");
+    }
+
+    function build(force){
+      if (!cv) return;
+      var ns = signature();
+      if (!force && ns === sig) { refreshTargets(); return; }
+      sig = ns;
+      readColors();
+
+      var old = byId; ents = []; byId = {};
+      var cx = W/2, cy = H/2;
+
+      nodes.forEach(function(n){
+        var prev = old[n.id];
+        var a = Math.random() * Math.PI * 2;
+        var e = {
+          id:n.id, kind:"node", ref:n,
+          x: prev ? prev.x : cx + Math.cos(a)*90,
+          y: prev ? prev.y : cy + Math.sin(a)*90,
+          vx:0, vy:0
+        };
+        ents.push(e); byId[n.id] = e;
+
+        (n.materials||[]).forEach(function(m, i){
+          var mid = n.id + "#m" + i, pm = old[mid];
+          var me = {
+            id:mid, kind:"mat", ref:n, text:m.text,
+            x: pm ? pm.x : e.x + (Math.random()-0.5)*40,
+            y: pm ? pm.y : e.y + (Math.random()-0.5)*40,
+            vx:0, vy:0, parent:e
+          };
+          ents.push(me); byId[mid] = me;
+        });
+      });
+
+      /* ニューロン: 見出しと材料が似ている項目同士を細く結ぶ */
+      rel = [];
+      var qs = ents.filter(function(e){ return e.kind === "node"; });
+      for (var i=0;i<qs.length && i<160;i++){
+        var best = [];
+        for (var j=0;j<qs.length;j++){
+          if (i === j) continue;
+          var d = dice(idx(qs[i].ref), idx(qs[j].ref));
+          if (d > 0.16) best.push({ b:qs[j], d:d });
+        }
+        best.sort(function(x,y){ return y.d - x.d; });
+        best.slice(0,2).forEach(function(x){ rel.push({ a:qs[i], b:x.b, w:x.d }); });
+      }
+
+      refreshTargets();
+      if (!motionOK) settle(260);
+    }
+
+    function refreshTargets(){
+      ents.forEach(function(e){
+        if (e.kind !== "node") return;
+        var n = e.ref;
+        var sc = n.status === "open" ? nowScore(n) : Math.round(nowScore(n) * 0.55);
+        if (hi[n.id]) sc = Math.min(100, sc + 60);
+        e.score = sc;
+        /* 0 = 中心, 1 = 画面の縁。いま度が高いほど中心に寄る */
+        e.t = 0.3 + 0.7 * (1 - Math.min(100, sc)/100);
+        e.rad = 3.6 + (Number(n.importance)||3) * 1.5;
+        e.alpha = 0.3 + 0.7 * freshWeight(n);
+        e.col = n.status === "open" ? col.open : (n.status === "done" ? col.done : col.note);
+        var ci = CONTEXTS.indexOf(n.context);
+        e.ang = ((ci < 0 ? CONTEXTS.length-1 : ci) / CONTEXTS.length) * Math.PI * 2 - Math.PI/2;
+      });
+    }
+
+    function step(){
+      var cx = W/2, cy = H/2, i, j, e, o;
+      var Rx = Math.max(50, W/2 - 30), Ry = Math.max(50, H/2 - 30);
+
+      for (i=0;i<ents.length;i++){
+        e = ents[i];
+        if (e.kind === "node"){
+          var dx = e.x - cx, dy = e.y - cy;
+          var d = Math.sqrt(dx*dx + dy*dy) || 0.001;
+          /* 正規化した楕円座標で引き寄せるので、縦長でも画面いっぱいに広がる */
+          var nx = dx/Rx, ny = dy/Ry;
+          var nd = Math.sqrt(nx*nx + ny*ny) || 0.001;
+          var f = (e.t - nd) * 0.016;
+          e.vx += (nx/nd) * f * Rx; e.vy += (ny/nd) * f * Ry;
+
+          /* 文脈ごとの扇形へゆるく寄せる */
+          var cur = Math.atan2(dy, dx);
+          var da = Math.atan2(Math.sin(e.ang - cur), Math.cos(e.ang - cur));
+          e.vx += -(dy/d) * da * 0.06;
+          e.vy +=  (dx/d) * da * 0.06;
+        } else {
+          var px = e.parent.x, py = e.parent.y;
+          var mx = e.x - px, my = e.y - py;
+          var md = Math.sqrt(mx*mx + my*my) || 0.001;
+          var mf = (26 - md) * 0.055;
+          e.vx += (mx/md) * mf; e.vy += (my/md) * mf;
+        }
+      }
+
+      /* 反発 */
+      var n = Math.min(ents.length, 260);
+      for (i=0;i<n;i++){
+        e = ents[i];
+        for (j=i+1;j<n;j++){
+          o = ents[j];
+          var ux = e.x - o.x, uy = e.y - o.y;
+          var u2 = ux*ux + uy*uy;
+          if (u2 > 16000 || u2 < 0.01) continue;
+          var u = Math.sqrt(u2);
+          var rf = 380 / u2;
+          e.vx += (ux/u)*rf; e.vy += (uy/u)*rf;
+          o.vx -= (ux/u)*rf; o.vy -= (uy/u)*rf;
+        }
+      }
+
+      for (i=0;i<ents.length;i++){
+        e = ents[i];
+        if (e === dragging) { e.vx = e.vy = 0; continue; }
+        e.vx *= 0.86; e.vy *= 0.86;
+        e.x += Math.max(-6, Math.min(6, e.vx));
+        e.y += Math.max(-6, Math.min(6, e.vy));
+        e.x = Math.max(10, Math.min(W-10, e.x));
+        e.y = Math.max(10, Math.min(H-10, e.y));
+      }
+    }
+    function settle(k){ for (var i=0;i<k;i++) step(); }
+
+    function draw(){
+      if (!ctx) return;
+      var cx = W/2, cy = H/2;
+      ctx.clearRect(0,0,W,H);
+
+      /* 中心とのつながり */
+      ctx.lineWidth = 1;
+      ents.forEach(function(e){
+        if (e.kind !== "node") return;
+        ctx.globalAlpha = 0.08 + 0.32 * (e.score/100) * e.alpha;
+        ctx.strokeStyle = hi[e.id] ? col.accent : col.line;
+        if (hi[e.id]) ctx.globalAlpha = 0.65;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(e.x, e.y); ctx.stroke();
+      });
+
+      /* ニューロン */
+      ctx.strokeStyle = col.accent;
+      rel.forEach(function(l){
+        ctx.globalAlpha = 0.10 + l.w * 0.30;
+        ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+      });
+
+      /* 材料の糸 */
+      ctx.strokeStyle = col.line;
+      ents.forEach(function(e){
+        if (e.kind !== "mat") return;
+        ctx.globalAlpha = 0.3;
+        ctx.beginPath(); ctx.moveTo(e.parent.x, e.parent.y); ctx.lineTo(e.x, e.y); ctx.stroke();
+      });
+
+      /* 中心 = いまの自分 */
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = col.accent;
+      ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 0.18;
+      ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 0.85; ctx.fillStyle = col.muted;
+      ctx.font = '500 10px "Noto Sans JP", system-ui, sans-serif';
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText("いま", cx, cy + 15);
+
+      /* 材料 */
+      ents.forEach(function(e){
+        if (e.kind !== "mat") return;
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = col.muted;
+        ctx.beginPath(); ctx.arc(e.x, e.y, 2.1, 0, Math.PI*2); ctx.fill();
+      });
+
+      /* 項目 */
+      var labels = ents.filter(function(e){ return e.kind === "node"; })
+                       .sort(function(a,b){ return b.score - a.score; });
+      labels.forEach(function(e){
+        if (hi[e.id]){
+          ctx.globalAlpha = 0.3; ctx.fillStyle = col.accent;
+          ctx.beginPath(); ctx.arc(e.x, e.y, e.rad + 7, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.globalAlpha = e.alpha; ctx.fillStyle = e.col;
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.rad, 0, Math.PI*2); ctx.fill();
+      });
+
+      ctx.font = '400 10.5px "Noto Sans JP", system-ui, sans-serif';
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      var taken = [{ x:cx-16, y:cy+13, w:32, h:16 }];   /* 「いま」のラベル分を確保 */
+      function clashes(b){
+        for (var k=0;k<taken.length;k++){
+          var p = taken[k];
+          if (!(b.x + b.w < p.x || b.x > p.x + p.w || b.y + b.h < p.y || b.y > p.y + p.h)) return true;
+        }
+        return false;
+      }
+      labels.forEach(function(e, i){
+        if (i > 16 && !hi[e.id]) return;
+        var t = e.ref.title || "";
+        if (t.length > 12) t = t.slice(0,12) + "…";
+        var w = ctx.measureText(t).width;
+        var lx = e.x < W/2 ? e.x + e.rad + 6 : e.x - e.rad - 6 - w;
+        if (lx < 4) lx = e.x + e.rad + 6;
+        if (lx + w > W - 4) lx = e.x - e.rad - 6 - w;
+        lx = Math.max(4, Math.min(W - 4 - w, lx));
+        var box = { x:lx - 2, y:e.y - 8, w:w + 4, h:16 };
+        if (clashes(box) && !hi[e.id]) return;
+        taken.push(box);
+        ctx.globalAlpha = hi[e.id] ? 1 : Math.max(0.55, Math.min(0.92, e.alpha));
+        ctx.fillStyle = hi[e.id] ? col.accent : col.ink;
+        ctx.fillText(t, lx, e.y);
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    function loop(){ step(); draw(); raf = requestAnimationFrame(loop); }
+    function start(){
+      if (raf || !cv) return;
+      resize(); build(true);
+      if (motionOK) loop(); else { settle(260); draw(); }
+    }
+    function stop(){ if (raf){ cancelAnimationFrame(raf); raf = null; } }
+
+    function at(x, y){
+      var best = null, bd = 1e9;
+      ents.forEach(function(e){
+        var d = Math.hypot(e.x - x, e.y - y);
+        var reach = (e.kind === "node" ? e.rad : 3) + 14;
+        if (d < reach && d < bd){ bd = d; best = e; }
+      });
+      return best;
+    }
+
+    function init(){
+      cv = $("map"); if (!cv) return;
+      ctx = cv.getContext("2d");
+      motionOK = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      readColors(); resize();
+
+      function pos(ev){
+        var r = cv.getBoundingClientRect();
+        var t = ev.touches ? ev.touches[0] : ev;
+        return { x: t.clientX - r.left, y: t.clientY - r.top };
+      }
+      function down(ev){
+        var q = pos(ev); dragging = at(q.x, q.y); moved = false;
+        if (dragging && ev.cancelable) ev.preventDefault();
+      }
+      function move(ev){
+        if (!dragging) return;
+        var q = pos(ev); dragging.x = q.x; dragging.y = q.y; moved = true;
+        if (ev.cancelable) ev.preventDefault();
+        if (!motionOK) draw();
+      }
+      function up(){
+        if (dragging && !moved) openSheet(dragging.kind === "mat" ? dragging.ref.id : dragging.id);
+        dragging = null;
+      }
+      cv.addEventListener("mousedown", down); cv.addEventListener("touchstart", down, {passive:false});
+      window.addEventListener("mousemove", move); cv.addEventListener("touchmove", move, {passive:false});
+      window.addEventListener("mouseup", up); cv.addEventListener("touchend", up);
+      window.addEventListener("resize", function(){ resize(); refreshTargets(); if (!motionOK) draw(); });
+      document.addEventListener("visibilitychange", function(){
+        if (document.hidden) stop(); else if (view === "map") start();
+      });
+    }
+
+    return {
+      init: init, start: start, stop: stop, build: build,
+      highlight: function(ids){
+        hi = {}; (ids||[]).forEach(function(i){ hi[i] = 1; });
+        refreshTargets(); if (!motionOK) draw();
+      }
+    };
+  })();
+
+  var view = "map";
+  function setView(v){
+    view = v;
+    $("mapView").hidden  = v !== "map";
+    $("listView").hidden = v !== "list";
+    $("tabs").hidden     = v === "map";
+    $("legend").hidden   = v !== "map";
+    $("viewToggle").textContent = v === "map" ? "リストで見る" : "マップで見る";
+    if (v === "map"){ Mind.start(); updateMapHint(); } else Mind.stop();
+  }
+  function updateMapHint(){
+    var h = $("mapHint");
+    h.hidden = nodes.length > 0;
+    if (!h.hidden) h.textContent = "まだ何もありません。上の欄に放り込むと、ここに芽が出ます。";
+  }
+
   /* ============================ イベント ============================ */
   send.addEventListener("click", capture);
   input.addEventListener("input", function(){ renderFusen(); scheduleSemantic(); });
@@ -1050,6 +1408,7 @@
   $("cfgClose").addEventListener("click", function(){ cfgSheet.hidden = true; });
   cfgSheet.addEventListener("click", function(e){ if (e.target === cfgSheet) cfgSheet.hidden = true; });
   $("cfgSave").addEventListener("click", function(){ saveCfg(); cfgSheet.hidden = true; note("保存しました。"); });
+  $("viewToggle").addEventListener("click", function(){ setView(view === "map" ? "list" : "map"); });
   $("cfgTest").addEventListener("click", probe);
   $("useRelay").addEventListener("click", function(){
     $("cfgEndpoint").value = "/api/jev"; saveCfg(); probe();
@@ -1102,7 +1461,9 @@
   /* ============================ 起動 ============================ */
   loadNodes();
   updateEngine();
+  Mind.init();
   render();
+  setView("map");
   if (!getCfg().key) setTimeout(openCfg, 350);
 })();
 </script>
