@@ -246,6 +246,7 @@
 
   .field{margin-bottom:16px}
   .field label{display:block; font-size:12px; color:var(--ink2); margin-bottom:5px; font-weight:500}
+  .sheet-body > .hint, .sheet-body .hint{font-size:11.5px; color:var(--muted); line-height:1.65}
   .field .hint{font-size:11.5px; color:var(--muted); margin:5px 0 0; line-height:1.65}
   pre.raw{
     background:var(--surface2); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
@@ -366,6 +367,26 @@
       </div>
       <div id="probe"></div>
 
+      <p class="block-label">バックアップ</p>
+      <p class="hint" style="margin:0 0 10px">
+        メモ・問い・結論・材料と、枝の分け方を1つのファイルにまとめます。APIキーは入りません。
+        データはこの端末のブラウザの中にしかないので、ブラウザのデータを消したり機種変更したりする前に保存してください。
+      </p>
+      <div class="sheet-actions" style="margin-top:0">
+        <button class="primary" id="bkSave" type="button">バックアップを保存</button>
+        <button class="ghost" id="bkCopy" type="button">文字でコピー</button>
+      </div>
+      <div class="sheet-actions">
+        <button class="ghost" id="bkOpen" type="button">ファイルから読み込む</button>
+        <button class="ghost" id="bkPasteToggle" type="button">貼り付けて読み込む</button>
+        <input type="file" id="bkFile" accept="application/json,.json,text/plain" hidden>
+      </div>
+      <div id="bkPasteBox" hidden style="margin-top:8px">
+        <textarea class="box" id="bkPaste" rows="4" spellcheck="false" placeholder="コピーしておいたバックアップの文字を貼り付け"></textarea>
+        <div class="sheet-actions"><button class="primary" id="bkPasteGo" type="button">読み込む</button></div>
+      </div>
+      <p class="hint" id="bkNote" style="margin:8px 0 0"></p>
+
       <p class="block-label">直近の生レスポンス</p>
       <p class="hint" style="margin:0 0 8px">
         判定がおかしいときは、ここを丸ごとコピーして渡してください。レスポンスの項目名に合わせて読み取り部分を直します。
@@ -457,7 +478,9 @@
   }
   function setCfg(c){ try { localStorage.setItem(CFG_KEY, JSON.stringify(c)); } catch(e){} }
 
-  function saveNodes(){ try { localStorage.setItem(DATA_KEY, JSON.stringify(nodes)); } catch(e){} }
+  /* 先頭が _ の項目は照合用の作業データ（Set など）なので保存しない */
+  function cleanJSON(v){ return JSON.stringify(v, function(k, x){ return k.charAt(0) === "_" ? undefined : x; }); }
+  function saveNodes(){ try { localStorage.setItem(DATA_KEY, cleanJSON(nodes)); } catch(e){} }
   function loadNodes(){
     try { nodes = JSON.parse(localStorage.getItem(DATA_KEY) || "[]") || []; }
     catch(e){ nodes = []; }
@@ -1087,7 +1110,7 @@
   }
   function idx(n){
     var key = n.id + "|" + (n.updatedAt||0) + "|" + ((n.materials||[]).length);
-    if (n._bgKey !== key){
+    if (n._bgKey !== key || !(n._bg instanceof Set)){
       n._bg = bigrams([n.title, n.conclusion].concat((n.materials||[]).map(function(m){ return m.text; })).filter(Boolean).join(" "));
       n._bgKey = key;
     }
@@ -1339,7 +1362,7 @@
     $("cfgModel").value = c.model || DEFAULT_MODEL;
     $("cfgContexts").value = CONTEXTS.filter(function(x){ return x !== "その他"; })
       .map(function(k){ return CONTEXT_HINTS[k] ? k + "：" + CONTEXT_HINTS[k] : k; }).join("\n");
-    $("probe").textContent = ""; refreshRaw();
+    $("probe").textContent = ""; refreshRaw(); showBackupNote();
     cfgSheet.hidden = false;
   }
   function saveCfg(){
@@ -1362,6 +1385,108 @@
     if (!verified){ b.className = "engine"; b.textContent = "Jev 未確認"; return; }
     b.className = "engine live"; b.textContent = "Jev ✓";
   }
+  /* ============================ バックアップ ============================ */
+  function backupObject(){
+    return {
+      app: "nou", version: 1, exportedAt: Date.now(),
+      nodes: JSON.parse(cleanJSON(nodes)),
+      contexts: CONTEXTS.filter(function(x){ return x !== "その他"; }),
+      contextHints: CONTEXT_HINTS
+    };
+  }
+  function backupName(){
+    var d = new Date();
+    return "nou-backup-" + d.getFullYear() + pad2(d.getMonth()+1) + pad2(d.getDate()) + "-" + pad2(d.getHours()) + pad2(d.getMinutes()) + ".json";
+  }
+  function markBackup(){ var c = getCfg(); c.lastBackupAt = Date.now(); setCfg(c); showBackupNote(); }
+  function showBackupNote(msg){
+    var c = getCfg(), el = $("bkNote");
+    var last = c.lastBackupAt ? "最後に保存: " + whenLong(c.lastBackupAt) : "まだ一度も保存していません。";
+    el.textContent = (msg ? msg + " " : "") + last + "（いま " + nodes.length + "件）";
+  }
+
+  async function saveBackup(){
+    var json = JSON.stringify(backupObject(), null, 1), name = backupName(), file = null;
+    try { file = new File([json], name, { type:"application/json" }); } catch(e){}
+    /* iPhone は共有シートから「ファイルに保存」や自分宛てに送るのが確実 */
+    if (file && navigator.canShare && navigator.canShare({ files:[file] })){
+      try { await navigator.share({ files:[file], title:"脳みそ仕分けのバックアップ" }); markBackup(); showBackupNote("保存しました。"); return; }
+      catch(e){ if (e && e.name === "AbortError"){ showBackupNote("キャンセルしました。"); return; } }
+    }
+    var url = URL.createObjectURL(new Blob([json], { type:"application/json" }));
+    var a = document.createElement("a"); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+    markBackup();
+    showBackupNote("書き出しました。ダウンロードされない場合は「文字でコピー」を使ってください。");
+  }
+  async function copyBackup(){
+    var json = JSON.stringify(backupObject());
+    try { await navigator.clipboard.writeText(json); markBackup(); showBackupNote("コピーしました。メモアプリなどに貼って保管してください。"); }
+    catch(e){
+      $("bkPasteBox").hidden = false; $("bkPaste").value = json; $("bkPaste").select();
+      showBackupNote("自動でコピーできなかったので、下の欄を全部選んでコピーしてください。");
+    }
+  }
+
+  function cleanNode(x){
+    if (!x || typeof x !== "object" || !x.id || typeof x.title !== "string") return null;
+    var num = function(v, d){ v = Number(v); return isFinite(v) ? v : d; };
+    return {
+      id: String(x.id).slice(0, 64), title: x.title.slice(0, 200),
+      kind: String(x.kind || "事実メモ"), context: String(x.context || "その他"),
+      status: ["open","done","note"].indexOf(x.status) >= 0 ? x.status : "note",
+      importance: Math.min(5, Math.max(1, Math.round(num(x.importance, 3)))),
+      freshness: HALFLIFE[x.freshness] ? x.freshness : "数週間もつ",
+      createdAt: num(x.createdAt, Date.now()), updatedAt: num(x.updatedAt, num(x.createdAt, Date.now())),
+      materials: (Array.isArray(x.materials) ? x.materials : []).filter(function(m){ return m && typeof m.text === "string"; })
+        .slice(0, 200).map(function(m){ return { text: m.text.slice(0, 2000), at: num(m.at, Date.now()) }; }),
+      conclusion: typeof x.conclusion === "string" ? x.conclusion.slice(0, 1000) : "",
+      conclusionAt: num(x.conclusionAt, 0)
+    };
+  }
+  /* 今あるデータは消さずに足し合わせる。同じ項目は新しく更新された方を残す */
+  function importBackup(text){
+    var obj;
+    try { obj = JSON.parse(String(text || "").trim()); } catch(e){ showBackupNote("読み込めませんでした。バックアップの文字が途中で切れていないか確認してください。"); return; }
+    var list = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.nodes) ? obj.nodes : null);
+    if (!list){ showBackupNote("このアプリのバックアップではないようです。"); return; }
+
+    var byId = {}, added = 0, updated = 0, kept = 0, skipped = 0;
+    nodes.forEach(function(n, i){ byId[n.id] = i; });
+    list.forEach(function(raw){
+      var n = cleanNode(raw); if (!n){ skipped++; return; }
+      if (byId[n.id] === undefined){ byId[n.id] = nodes.length; nodes.push(n); added++; }
+      else if (n.updatedAt > (nodes[byId[n.id]].updatedAt || 0)){ nodes[byId[n.id]] = n; updated++; }
+      else kept++;
+    });
+
+    if (obj && Array.isArray(obj.contexts)){
+      var c = getCfg(), cur = CONTEXTS.filter(function(x){ return x !== "その他"; }), hints = Object.assign({}, CONTEXT_HINTS);
+      obj.contexts.forEach(function(k){ k = String(k).slice(0, 12); if (k && k !== "その他" && cur.indexOf(k) < 0 && cur.length < 11) cur.push(k); });
+      if (obj.contextHints && typeof obj.contextHints === "object")
+        Object.keys(obj.contextHints).forEach(function(k){ if (!hints[k] && typeof obj.contextHints[k] === "string") hints[k] = obj.contextHints[k].slice(0, 80); });
+      c.contexts = cur; c.contextHints = hints; setCfg(c); loadContexts();
+      $("cfgContexts").value = cur.map(function(k){ return hints[k] ? k + "：" + hints[k] : k; }).join("\n");
+    }
+    saveNodes(); render();
+    $("bkPaste").value = ""; $("bkPasteBox").hidden = true;
+    showBackupNote("読み込みました（新しく " + added + "件・更新 " + updated + "件・変更なし " + kept + "件" + (skipped ? "・読めなかったもの " + skipped + "件" : "") + "）。");
+  }
+
+  /* 大事なものが溜まってきたのに長く保存していなければ、1日1回だけ知らせる */
+  function remindBackup(){
+    var c = getCfg(), today = new Date().toDateString();
+    if (nodes.length < 10) return;
+    if (c.lastBackupAt && Date.now() - c.lastBackupAt < 14 * DAY) return;
+    try { if (localStorage.getItem("nou.remind") === today) return; localStorage.setItem("nou.remind", today); } catch(e){ return; }
+    statusEl.hidden = false; statusEl.className = "status"; statusEl.textContent = "";
+    statusEl.appendChild(document.createTextNode((c.lastBackupAt ? "2週間以上" : "まだ一度も") + "バックアップしていません。 "));
+    var b = document.createElement("button"); b.type = "button"; b.textContent = "いま保存する";
+    b.onclick = function(){ statusEl.hidden = true; openCfg(); saveBackup(); };
+    statusEl.appendChild(b);
+  }
+
   var reclassifying = false;
   async function reclassifyAll(){
     if (reclassifying) return;
@@ -1881,6 +2006,18 @@
   $("viewToggle").addEventListener("click", function(){ setView(view === "map" ? "list" : "map"); });
   $("cfgTest").addEventListener("click", probe);
   $("reclassify").addEventListener("click", reclassifyAll);
+  $("bkSave").addEventListener("click", saveBackup);
+  $("bkCopy").addEventListener("click", copyBackup);
+  $("bkOpen").addEventListener("click", function(){ $("bkFile").value = ""; $("bkFile").click(); });
+  $("bkFile").addEventListener("change", function(){
+    var f = this.files && this.files[0]; if (!f) return;
+    var r = new FileReader();
+    r.onload = function(){ importBackup(r.result); };
+    r.onerror = function(){ showBackupNote("ファイルを開けませんでした。"); };
+    r.readAsText(f);
+  });
+  $("bkPasteToggle").addEventListener("click", function(){ $("bkPasteBox").hidden = !$("bkPasteBox").hidden; if (!$("bkPasteBox").hidden) $("bkPaste").focus(); });
+  $("bkPasteGo").addEventListener("click", function(){ importBackup($("bkPaste").value); });
   $("useRelay").addEventListener("click", function(){
     $("cfgEndpoint").value = "/api/jev"; saveCfg(); probe();
   });
@@ -1936,6 +2073,7 @@
   Mind.init();
   render();
   setView("map");
+  setTimeout(remindBackup, 1500);
   if (!getCfg().key) setTimeout(openCfg, 350);
 })();
 </script>
