@@ -120,16 +120,58 @@
   .viewbar{display:flex; align-items:center; gap:8px; padding-block:14px 8px; border-bottom:1px solid var(--line)}
   .viewbar .tabs{border:0; padding:0; flex:1}
   .legend{display:flex; gap:12px; flex:1; align-items:center; font-size:11px; color:var(--muted); flex-wrap:wrap}
-  .legend i{display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle}
   .viewbtn{background:transparent; border:1px solid var(--line); border-radius:99px; padding:4px 12px; font-size:11.5px; color:var(--ink2); white-space:nowrap}
   .viewbtn:hover{background:var(--surface2)}
 
-  .mapwrap{flex:1; position:relative; overflow:hidden; margin:0 -16px}
-  #map{display:block; width:100%; height:100%; touch-action:manipulation}
-  .maphint{
-    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-    margin:0; width:min(280px, 78%); text-align:center; font-size:12.5px; color:var(--muted); line-height:1.9;
+  .mapwrap{flex:1; position:relative; overflow-y:auto; overflow-x:hidden; margin:0 -16px; -webkit-overflow-scrolling:touch}
+  .stage{position:relative; width:100%; transition:height .5s cubic-bezier(.2,.8,.2,1)}
+  .stage.noanim, .stage.noanim *{transition:none !important}
+  .blob{position:absolute; left:0; top:0; pointer-events:none; opacity:.15; z-index:0;
+    transition:transform .6s cubic-bezier(.2,.8,.2,1), opacity .5s, color .5s}
+  .blob path{fill:currentColor}
+  .wires{position:absolute; left:0; top:0; pointer-events:none; overflow:visible; z-index:1}
+  .wires line{stroke:var(--c); stroke-width:1.5; stroke-dasharray:1.2 4.2; stroke-linecap:round}
+  .wires line.cand{stroke-width:2; stroke-dasharray:none}
+
+  .mm{
+    position:absolute; left:0; top:0; z-index:2; display:flex; align-items:center; justify-content:center;
+    padding:0 12px; border-radius:99px; font-family:inherit; font-size:12px; line-height:1; cursor:pointer;
+    transition:transform .5s cubic-bezier(.2,.8,.2,1), width .5s cubic-bezier(.2,.8,.2,1), height .5s cubic-bezier(.2,.8,.2,1),
+               opacity .35s, background-color .3s, box-shadow .3s;
+    will-change:transform;
   }
+  .mm span{display:block; min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .mm-cat{background:var(--c); color:#fff; border:0; font-weight:700; font-size:12.5px; letter-spacing:.04em;
+    box-shadow:0 2px 10px rgba(20,24,31,.10)}
+  .mm-item{background:var(--bg); border:1.5px solid var(--c); justify-content:flex-start; font-weight:500;
+    color:var(--ink); color:color-mix(in srgb, var(--c) 66%, var(--ink))}
+  .mm-item.note{border-style:dashed}
+  .mm-item.done span::before{content:"✓ "}
+  .mm-more{background:transparent; border:1px dashed var(--line); color:var(--muted); font-size:11px}
+  .mm-item.cand{z-index:3; border-width:2px; font-weight:700; font-size:12.5px;
+    background:var(--surface); background:color-mix(in srgb, var(--c) 12%, var(--bg));
+    box-shadow:0 6px 20px rgba(20,24,31,.12)}
+
+  .hub{position:absolute; left:0; top:0; z-index:2; cursor:text;
+    transition:transform .5s cubic-bezier(.2,.8,.2,1), width .5s cubic-bezier(.2,.8,.2,1), height .5s cubic-bezier(.2,.8,.2,1)}
+  .hub .scallop{position:absolute; inset:0; width:100%; height:100%; overflow:visible;
+    filter:drop-shadow(0 6px 18px rgba(20,24,31,.09))}
+  .hub .scallop path{fill:var(--bg); stroke:var(--line); stroke-width:.8}
+  .hub-cap{position:absolute; left:50%; top:-26px; transform:translateX(-50%); white-space:nowrap;
+    font-size:10.5px; font-weight:700; letter-spacing:.16em; color:var(--ink2);
+    padding-bottom:3px; border-bottom:2px dotted var(--ink2)}
+  .hub-in{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:3px; padding:0 14px; text-align:center}
+  .hub-icon{color:var(--ink2); line-height:0}
+  .hub-title{font-family:"Shippori Mincho",serif; font-weight:600; font-size:17px; line-height:1.3; color:var(--ink)}
+  .hub-typed{font-size:13px; font-weight:700; line-height:1.4; color:var(--ink); word-break:break-all;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+  .hub-sub{font-size:10px; line-height:1.5; color:var(--muted); letter-spacing:.03em}
+
+  .lg{display:inline-block; width:18px; height:9px; border-radius:99px; border:1.5px solid var(--muted); margin-right:5px; vertical-align:-1px}
+  .lg.note{border-style:dashed}
+  .lg.cat{background:var(--muted); border:0}
+  @media (prefers-reduced-motion: reduce){ .mm, .hub, .stage, .blob{transition:none} }
   .scroll{flex:1; overflow-y:auto; padding-bottom:40px}
   ul.list{list-style:none; margin:0; padding:0}
   .node{padding:14px 2px; border-bottom:1px solid var(--line); cursor:pointer;
@@ -219,17 +261,17 @@
         <button data-tab="note" type="button">メモ <span class="n" id="nNote"></span></button>
       </nav>
       <div class="legend" id="legend" hidden>
-        <span><i style="background:var(--open)"></i>宙ぶらりん</span>
-        <span><i style="background:var(--done)"></i>解決済み</span>
-        <span><i style="background:var(--muted)"></i>メモ</span>
+        <span><i class="lg cat"></i>文脈</span>
+        <span><i class="lg"></i>宙ぶらりん</span>
+        <span>✓ 解決済み</span>
+        <span><i class="lg note"></i>メモ</span>
       </div>
       <button class="viewbtn" id="viewToggle" type="button">リストで見る</button>
     </div>
   </div>
 
   <div class="mapwrap" id="mapView">
-    <canvas id="map"></canvas>
-    <p class="maphint" id="mapHint" hidden></p>
+    <div class="stage" id="stage"></div>
   </div>
 
   <div class="scroll" id="listView" hidden>
@@ -665,7 +707,7 @@
       listEl.appendChild(li);
     });
 
-    if (typeof Mind !== "undefined"){ Mind.build(false); updateMapHint(); }
+    if (typeof Mind !== "undefined") Mind.build(false);
     emptyEl.hidden = items.length > 0;
     if (!items.length){
       emptyEl.textContent = nodes.length === 0
@@ -804,7 +846,7 @@
   function renderFusen(){
     var text = input.value.trim();
     fusenEl.textContent = "";
-    if (text.length < 2){ lastLocalTop = 0; Mind.highlight([]); return; }
+    if (text.length < 2){ lastLocalTop = 0; Mind.highlight([], text, false); return; }
     var local = localMatches(text), picked = [], seen = {};
     if (semanticFor === text){
       semantic.forEach(function(id){
@@ -816,8 +858,8 @@
       if (seen[r.n.id] || picked.length >= 3) return;
       seen[r.n.id] = 1; picked.push({ n:r.n, why:"" });
     });
-    Mind.highlight(picked.map(function(x){ return x.n.id; }));
-    if (!picked.length) return;
+    Mind.highlight(picked.map(function(x){ return x.n.id; }), text, !!semInFlight);
+    if (view === "map" || !picked.length) return;
 
     var head = document.createElement("div"); head.className = "fusen-head";
     head.appendChild(document.createTextNode(
@@ -853,7 +895,7 @@
   function clearFusen(){
     clearTimeout(semTimer);
     semantic = []; semanticFor = ""; lastLocalTop = 0; semInFlight = null;
-    fusenEl.textContent = ""; Mind.highlight([]);
+    fusenEl.textContent = ""; Mind.highlight([], "", false);
   }
 
   /* ============================ 投入 ============================ */
@@ -1057,315 +1099,353 @@
   }
 
   /* ============================ マインドマップ ============================ */
-  /* 中心は「いまの自分」。いま度が高いものほど中心に寄り、
-     鮮度が落ちたものは薄くなって外へ流れていく。          */
+  /* 中心は「いまの自分」。文脈ごとの枝に項目がぶら下がる。
+     普段は静止していて、入力中だけ候補が枝から抜けて中心へ寄り、残りが詰めて並び替わる。 */
   var Mind = (function(){
-    var cv, ctx, raf = null, W = 0, H = 0, DPR = 1;
-    var ents = [], byId = {}, rel = [], sig = "", col = {};
-    var hi = {}, motionOK = true, dragging = null, moved = false;
+    var PAL = { "副業/EC":"#e8605c", "仕事":"#4aa8d4", "健康":"#4fae80", "家族":"#de6fa0",
+                "趣味":"#ee9150", "学習":"#8a6ad0", "その他":"#8b95a3" };
+    var SVGNS = "http://www.w3.org/2000/svg";
+    var BLOB = "M112 8C160 14 196 52 192 104C188 150 158 186 108 192C58 198 14 168 8 116C2 64 40 20 88 10C96 8 104 7 112 8Z";
 
-    function css(name){
-      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    }
-    function readColors(){
-      col = {
-        open: css("--open") || "#b06a15",
-        done: css("--done") || "#3a7358",
-        note: css("--muted") || "#6b7686",
-        line: css("--line") || "#e2e6ec",
-        accent: css("--accent") || "#2f5d8c",
-        ink: css("--ink") || "#14181f",
-        muted: css("--muted") || "#6b7686"
-      };
-    }
-    function resize(){
-      if (!cv) return;
-      var r = cv.parentNode.getBoundingClientRect();
-      W = Math.max(120, r.width); H = Math.max(120, r.height);
-      DPR = Math.min(2, window.devicePixelRatio || 1);
-      cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
-      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    }
+    var wrap, stage, wires, hubEl, blobs = {};
+    var els = {}, links = [], expanded = {};
+    var sig = "", cands = [], candKey = "", typed = "", busy = false;
+    var ready = false, laidOut = false, timer = null, rafId = null, wireUntil = 0;
+    var hub = { x:0, y:0, d:0, top:0 }, lastH = 0;
 
+    function score(n){ return n.status === "open" ? nowScore(n) : Math.round(nowScore(n) * 0.55); }
+    function catOf(n){ return PAL[n.context] ? n.context : "その他"; }
     function signature(){
       return nodes.map(function(n){
-        return n.id + ":" + (n.updatedAt||0) + ":" + ((n.materials||[]).length) + ":" + n.status;
+        return n.id + ":" + (n.updatedAt||0) + ":" + n.status + ":" + n.context + ":" + (n.title||"");
       }).join("|");
     }
 
-    function build(force){
-      if (!cv) return;
-      var ns = signature();
-      if (!force && ns === sig) { refreshTargets(); return; }
-      sig = ns;
-      readColors();
+    function scallop(){
+      var pts = [], N = 180, k = 14, r = 48.5, amp = 1.6;
+      for (var i=0;i<=N;i++){
+        var t = i/N * Math.PI * 2, rr = r - amp + amp * Math.cos(k*t);
+        pts.push((50 + rr*Math.cos(t)).toFixed(2) + "," + (50 + rr*Math.sin(t)).toFixed(2));
+      }
+      return "M" + pts.join("L") + "Z";
+    }
+    function bulb(){
+      var d = document.createElement("div"); d.className = "hub-icon";
+      d.innerHTML = '<svg viewBox="0 0 40 40" width="28" height="28" aria-hidden="true">'
+        + '<g stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none">'
+        + '<path d="M20 2v4M8.5 7.5l2.8 2.8M31.5 7.5l-2.8 2.8M3 18h4M33 18h4"/>'
+        + '<path d="M14.5 27c-2.8-2.1-4.5-5.2-4.5-8.8a10 10 0 0 1 20 0c0 3.6-1.7 6.7-4.5 8.8V30h-11z" fill="#f6da6c"/>'
+        + '<path d="M15.5 33.5h9M17 37h6"/></g></svg>';
+      return d;
+    }
 
-      var old = byId; ents = []; byId = {};
-      var cx = W/2, cy = H/2;
+    function renderHub(){
+      var open = nodes.filter(function(n){ return n.status === "open"; }).length;
+      var key = typed + "|" + cands.length + "|" + busy + "|" + nodes.length + "|" + open;
+      if (hubEl._key === key) return;
+      hubEl._key = key;
+      hubEl.textContent = "";
 
+      var svg = document.createElementNS(SVGNS, "svg");
+      svg.setAttribute("class", "scallop"); svg.setAttribute("viewBox", "0 0 100 100");
+      svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("aria-hidden", "true");
+      var path = document.createElementNS(SVGNS, "path"); path.setAttribute("d", scallop());
+      svg.appendChild(path); hubEl.appendChild(svg);
+
+      var cap = document.createElement("div"); cap.className = "hub-cap";
+      cap.textContent = typed ? "いま考えていること" : "頭の中";
+      hubEl.appendChild(cap);
+
+      var inn = document.createElement("div"); inn.className = "hub-in";
+      if (typed){
+        var t = document.createElement("div"); t.className = "hub-typed"; t.textContent = typed; inn.appendChild(t);
+        var s1 = document.createElement("div"); s1.className = "hub-sub";
+        s1.textContent = busy ? "Jev が探しています" : (cands.length ? "近いもの " + cands.length + "件" : "近いものなし");
+        inn.appendChild(s1);
+      } else {
+        inn.appendChild(bulb());
+        var h = document.createElement("div"); h.className = "hub-title"; h.textContent = "いまの自分"; inn.appendChild(h);
+        var s2 = document.createElement("div"); s2.className = "hub-sub";
+        var dt = new Date();
+        s2.textContent = nodes.length
+          ? "宙ぶらりん " + open + "件 · " + (dt.getMonth()+1) + "/" + dt.getDate()
+          : "放り込むと、ここから枝が伸びます";
+        inn.appendChild(s2);
+      }
+      hubEl.appendChild(inn);
+    }
+
+    function cls(s){
+      if (s.kind === "cat") return "mm mm-cat";
+      if (s.kind === "more") return "mm mm-more";
+      return "mm mm-item" + (s.status === "done" ? " done" : s.status === "note" ? " note" : "") + (s.cand ? " cand" : "");
+    }
+
+    function layout(animate){
+      if (!ready || !wrap.clientWidth) return;
+      var W = wrap.clientWidth, H = wrap.clientHeight;
+      var focus = cands.length > 0;
+      var pad = 14, gapCol = 10;
+      var colW = Math.floor((W - pad*2 - gapCol) / 2);
+      var catH = 32, itemH = 30, rowGap = 7, blockGap = 20, gapTB = 24, capH = 32;
+      var catW = Math.min(136, Math.round(colW * 0.72));
+      var itemW = colW - 10;
+      var hubD = focus ? 124 : Math.round(Math.max(120, Math.min(156, W * 0.38)));
+      var candRow = itemH + 4, candGap = 9;
+
+      var candSet = {}; cands.forEach(function(id){ candSet[id] = 1; });
+      var groups = {};
       nodes.forEach(function(n){
-        var prev = old[n.id];
-        var a = Math.random() * Math.PI * 2;
-        var e = {
-          id:n.id, kind:"node", ref:n,
-          x: prev ? prev.x : cx + Math.cos(a)*90,
-          y: prev ? prev.y : cy + Math.sin(a)*90,
-          vx:0, vy:0
-        };
-        ents.push(e); byId[n.id] = e;
+        if (candSet[n.id]) return;
+        var c = catOf(n); (groups[c] = groups[c] || []).push(n);
+      });
+      var cats = Object.keys(groups).map(function(c){
+        var items = groups[c].slice().sort(function(x,y){ return score(y) - score(x); });
+        return { name:c, items:items, total: items.reduce(function(t,n){ return t + score(n) + 5; }, 0) };
+      }).sort(function(x,y){ return y.total - x.total; });
 
-        (n.materials||[]).forEach(function(m, i){
-          var mid = n.id + "#m" + i, pm = old[mid];
-          var me = {
-            id:mid, kind:"mat", ref:n, text:m.text,
-            x: pm ? pm.x : e.x + (Math.random()-0.5)*40,
-            y: pm ? pm.y : e.y + (Math.random()-0.5)*40,
-            vx:0, vy:0, parent:e
-          };
-          ents.push(me); byId[mid] = me;
+      var Q = { TL:[], TR:[], BL:[], BR:[] }, ORDER = ["TL","TR","BL","BR"];
+      cats.forEach(function(c, i){ Q[ORDER[i % 4]].push(c); });
+
+      function vis(c){
+        var lim = expanded[c.name] ? c.items.length : 3;
+        var list = c.items.slice(0, lim), more = c.items.length - list.length;
+        return { list:list, more:more, rows: list.length + (more > 0 ? 1 : 0) };
+      }
+      function blockH(c){ return catH + vis(c).rows * (itemH + rowGap); }
+      function stackH(q){ return Q[q].reduce(function(h, c, i){ return h + blockH(c) + (i ? blockGap : 0); }, 0); }
+
+      var topH = Math.max(stackH("TL"), stackH("TR"));
+      var botH = Math.max(stackH("BL"), stackH("BR"));
+      var candH = focus ? 16 + cands.length * (candRow + candGap) - candGap : 0;
+      var midH = capH + hubD + candH;
+      var need = pad + topH + (topH ? gapTB : 0) + midH + (botH ? gapTB : 0) + botH + pad;
+      var SH = Math.max(H, need);
+      var y0 = pad + (SH - need) / 2;
+      var topBottom = y0 + topH;
+      var midTop = topBottom + (topH ? gapTB : 0);
+      var hubY = midTop + capH;
+      var botTop = midTop + midH + (botH ? gapTB : 0);
+      /* 候補を出している間は、中心を画面上端まで上げられるだけの余白を下に足す（キーボード対策） */
+      if (focus) SH = Math.max(SH, midTop - 8 + H);
+
+      hub = { x:(W - hubD)/2, y:hubY, d:hubD, top:midTop };
+      lastH = H;
+
+      var want = {}; links = [];
+      var dim = focus ? 0.26 : null;
+      var leftX = pad, rightX = pad + colW + gapCol;
+
+      ORDER.forEach(function(q){
+        var left = q.charAt(1) === "L", top = q.charAt(0) === "T";
+        var x0 = left ? leftX : rightX;
+        var cur = top ? topBottom : botTop;
+        Q[q].forEach(function(c, ci){
+          if (ci) cur += top ? -blockGap : blockGap;
+          var color = PAL[c.name];
+          var cy = top ? cur - catH : cur;
+          var ck = "c:" + c.name;
+          want[ck] = { kind:"cat", x: left ? x0 + colW - catW : x0, y:cy, w:catW, h:catH, c:color,
+                       text: c.name + "  " + c.items.length, cat:c.name, op: focus ? 0.45 : 1 };
+          links.push({ from:"hub", to:ck, c:color, kind:"cat" });
+          cur = top ? cy - rowGap : cy + catH + rowGap;
+          var prev = ck;
+
+          var v = vis(c);
+          v.list.forEach(function(n){
+            var iy = top ? cur - itemH : cur;
+            var k = "i:" + n.id;
+            want[k] = { kind:"item", x: left ? x0 : x0 + colW - itemW, y:iy, w:itemW, h:itemH, c:color,
+                        text: n.title || "(無題)", id:n.id, status:n.status || "open",
+                        op: dim !== null ? dim : 0.5 + 0.5 * freshWeight(n) };
+            links.push({ from:prev, to:k, c:color, kind:"item" });
+            prev = k;
+            cur = top ? iy - rowGap : iy + itemH + rowGap;
+          });
+          if (v.more > 0){
+            var mw = 84, my = top ? cur - itemH : cur;
+            want["m:" + c.name] = { kind:"more", x: left ? x0 : x0 + colW - mw, y:my, w:mw, h:itemH, c:color,
+                                    text:"ほか " + v.more + "件", cat:c.name, op: dim !== null ? dim : 1 };
+            links.push({ from:prev, to:"m:" + c.name, c:color, kind:"item" });
+            cur = top ? my - rowGap : my + itemH + rowGap;
+          }
+          cur += top ? rowGap : -rowGap;
         });
       });
 
-      /* ニューロン: 見出しと材料が似ている項目同士を細く結ぶ */
-      rel = [];
-      var qs = ents.filter(function(e){ return e.kind === "node"; });
-      for (var i=0;i<qs.length && i<160;i++){
-        var best = [];
-        for (var j=0;j<qs.length;j++){
-          if (i === j) continue;
-          var d = dice(idx(qs[i].ref), idx(qs[j].ref));
-          if (d > 0.16) best.push({ b:qs[j], d:d });
-        }
-        best.sort(function(x,y){ return y.d - x.d; });
-        best.slice(0,2).forEach(function(x){ rel.push({ a:qs[i], b:x.b, w:x.d }); });
-      }
-
-      refreshTargets();
-      if (!motionOK) settle(260);
-    }
-
-    function refreshTargets(){
-      ents.forEach(function(e){
-        if (e.kind !== "node") return;
-        var n = e.ref;
-        var sc = n.status === "open" ? nowScore(n) : Math.round(nowScore(n) * 0.55);
-        if (hi[n.id]) sc = Math.min(100, sc + 60);
-        e.score = sc;
-        /* 0 = 中心, 1 = 画面の縁。いま度が高いほど中心に寄る */
-        e.t = 0.3 + 0.7 * (1 - Math.min(100, sc)/100);
-        e.rad = 3.6 + (Number(n.importance)||3) * 1.5;
-        e.alpha = 0.3 + 0.7 * freshWeight(n);
-        e.col = n.status === "open" ? col.open : (n.status === "done" ? col.done : col.note);
-        var ci = CONTEXTS.indexOf(n.context);
-        e.ang = ((ci < 0 ? CONTEXTS.length-1 : ci) / CONTEXTS.length) * Math.PI * 2 - Math.PI/2;
+      var candW = Math.min(W - pad*2 - 16, 330), cy2 = hubY + hubD + 16;
+      cands.forEach(function(id){
+        var n = find(id); if (!n) return;
+        var color = PAL[catOf(n)], k = "i:" + n.id;
+        want[k] = { kind:"item", cand:true, x:(W - candW)/2, y:cy2, w:candW, h:candRow, c:color,
+                    text: (n.title || "(無題)") + (n.status === "done" && n.conclusion ? "  →  " + n.conclusion : ""),
+                    id:n.id, status:n.status || "open", op:1 };
+        links.push({ from:"hub", to:k, c:color, kind:"cand" });
+        cy2 += candRow + candGap;
       });
+
+      /* ---- 反映 ---- */
+      var first = !laidOut, quiet = first || !animate;
+      if (quiet) stage.classList.add("noanim");
+
+      stage.style.height = SH + "px";
+      wires.setAttribute("width", W); wires.setAttribute("height", SH);
+      wires.setAttribute("viewBox", "0 0 " + W + " " + SH);
+
+      hubEl.style.width = hubD + "px"; hubEl.style.height = hubD + "px";
+      hubEl.style.transform = "translate(" + hub.x + "px," + hub.y + "px)";
+      renderHub();
+
+      ORDER.forEach(function(q){
+        var el = blobs[q], c = Q[q][0], size = Math.round(W * 0.52);
+        el.style.width = size + "px"; el.style.height = size + "px";
+        var bx = q.charAt(1) === "L" ? -size * 0.46 : W - size * 0.54;
+        var by = q.charAt(0) === "T" ? -size * 0.42 : SH - size * 0.58;
+        var sx = q.charAt(1) === "L" ? 1 : -1, sy = q.charAt(0) === "T" ? 1 : -1;
+        el.style.transform = "translate(" + bx + "px," + by + "px) scale(" + sx + "," + sy + ")";
+        el.style.opacity = c ? (focus ? "0.06" : "") : "0";
+        if (c) el.style.color = PAL[c.name];
+      });
+
+      var hubCx = W/2, hubCy = hubY + hubD/2;
+      Object.keys(want).forEach(function(key){
+        var sp = want[key], el = els[key];
+        if (!el){
+          el = document.createElement("button"); el.type = "button";
+          el.appendChild(document.createElement("span"));
+          stage.appendChild(el); els[key] = el;
+          if (!quiet){
+            /* 新しい項目は中心から芽を出す */
+            el.className = cls(sp);
+            el.style.width = sp.w + "px"; el.style.height = sp.h + "px";
+            el.style.transform = "translate(" + (hubCx - sp.w/2) + "px," + (hubCy - sp.h/2) + "px) scale(.35)";
+            el.style.opacity = "0";
+            void el.offsetWidth;
+          }
+        }
+        el.className = cls(sp);
+        el.style.setProperty("--c", sp.c);
+        el.firstChild.textContent = sp.text;
+        el.title = sp.text; el.setAttribute("aria-label", sp.text);
+        el.dataset.id = sp.id || ""; el.dataset.cat = sp.cat || "";
+        el.style.width = sp.w + "px"; el.style.height = sp.h + "px";
+        el.style.transform = "translate(" + Math.round(sp.x) + "px," + Math.round(sp.y) + "px)";
+        el.style.opacity = String(sp.op == null ? 1 : sp.op);
+      });
+      Object.keys(els).forEach(function(key){
+        if (want[key]) return;
+        var el = els[key]; delete els[key];
+        el.style.opacity = "0"; el.style.pointerEvents = "none";
+        setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 420);
+      });
+
+      if (quiet){
+        void stage.offsetWidth;
+        requestAnimationFrame(function(){ stage.classList.remove("noanim"); });
+      }
+      laidOut = true;
+      animateWires(quiet ? 0 : 720);
+
+      if (first) wrap.scrollTop = Math.max(0, hubCy - H/2);
+      else if (focus) wrap.scrollTo({ top: Math.max(0, midTop - 8), behavior: "smooth" });
+      else if (animate) wrap.scrollTo({ top: Math.max(0, hubCy - H/2), behavior: "smooth" });
     }
 
-    function step(){
-      var cx = W/2, cy = H/2, i, j, e, o;
-      var Rx = Math.max(50, W/2 - 30), Ry = Math.max(50, H/2 - 30);
-
-      for (i=0;i<ents.length;i++){
-        e = ents[i];
-        if (e.kind === "node"){
-          var dx = e.x - cx, dy = e.y - cy;
-          var d = Math.sqrt(dx*dx + dy*dy) || 0.001;
-          /* 正規化した楕円座標で引き寄せるので、縦長でも画面いっぱいに広がる */
-          var nx = dx/Rx, ny = dy/Ry;
-          var nd = Math.sqrt(nx*nx + ny*ny) || 0.001;
-          var f = (e.t - nd) * 0.016;
-          e.vx += (nx/nd) * f * Rx; e.vy += (ny/nd) * f * Ry;
-
-          /* 文脈ごとの扇形へゆるく寄せる */
-          var cur = Math.atan2(dy, dx);
-          var da = Math.atan2(Math.sin(e.ang - cur), Math.cos(e.ang - cur));
-          e.vx += -(dy/d) * da * 0.06;
-          e.vy +=  (dx/d) * da * 0.06;
+    /* ---- 線: 動いている間だけ要素の実位置を追いかけて引き直す ---- */
+    function rect(el, sr){
+      var r = el.getBoundingClientRect();
+      return { l:r.left - sr.left, t:r.top - sr.top, r:r.right - sr.left, b:r.bottom - sr.top, h:r.height };
+    }
+    function mid(B){ return { x:(B.l + B.r)/2, y:(B.t + B.b)/2 }; }
+    function edge(B, p){
+      var rad = B.h/2, cy = (B.t + B.b)/2, lx = B.l + rad, rx = B.r - rad;
+      if (rx < lx) lx = rx = (B.l + B.r)/2;
+      var x = Math.max(lx, Math.min(rx, p.x)), dx = p.x - x, dy = p.y - cy, d = Math.hypot(dx, dy) || 1;
+      return { x: x + dx/d*rad, y: cy + dy/d*rad };
+    }
+    function drawWires(){
+      var sr = stage.getBoundingClientRect(), hr = hubEl.getBoundingClientRect();
+      var hc = { x: hr.left - sr.left + hr.width/2, y: hr.top - sr.top + hr.height/2 }, hR = hr.width/2 - 2;
+      var out = [];
+      links.forEach(function(l){
+        var bEl = els[l.to]; if (!bEl) return;
+        var B = rect(bEl, sr), p1, p2, op = parseFloat(bEl.style.opacity || "1");
+        if (l.from === "hub"){
+          p2 = edge(B, hc);
+          var dx = p2.x - hc.x, dy = p2.y - hc.y, d = Math.hypot(dx, dy) || 1;
+          p1 = { x: hc.x + dx/d*hR, y: hc.y + dy/d*hR };
         } else {
-          var px = e.parent.x, py = e.parent.y;
-          var mx = e.x - px, my = e.y - py;
-          var md = Math.sqrt(mx*mx + my*my) || 0.001;
-          var mf = (26 - md) * 0.055;
-          e.vx += (mx/md) * mf; e.vy += (my/md) * mf;
+          var aEl = els[l.from]; if (!aEl) return;
+          var A = rect(aEl, sr);
+          p1 = edge(A, mid(B)); p2 = edge(B, mid(A));
+          op = Math.min(op, parseFloat(aEl.style.opacity || "1"));
         }
-      }
-
-      /* 反発 */
-      var n = Math.min(ents.length, 260);
-      for (i=0;i<n;i++){
-        e = ents[i];
-        for (j=i+1;j<n;j++){
-          o = ents[j];
-          var ux = e.x - o.x, uy = e.y - o.y;
-          var u2 = ux*ux + uy*uy;
-          if (u2 > 16000 || u2 < 0.01) continue;
-          var u = Math.sqrt(u2);
-          var rf = 380 / u2;
-          e.vx += (ux/u)*rf; e.vy += (uy/u)*rf;
-          o.vx -= (ux/u)*rf; o.vy -= (uy/u)*rf;
-        }
-      }
-
-      for (i=0;i<ents.length;i++){
-        e = ents[i];
-        if (e === dragging) { e.vx = e.vy = 0; continue; }
-        e.vx *= 0.86; e.vy *= 0.86;
-        e.x += Math.max(-6, Math.min(6, e.vx));
-        e.y += Math.max(-6, Math.min(6, e.vy));
-        e.x = Math.max(10, Math.min(W-10, e.x));
-        e.y = Math.max(10, Math.min(H-10, e.y));
-      }
+        out.push('<line x1="' + p1.x.toFixed(1) + '" y1="' + p1.y.toFixed(1) + '" x2="' + p2.x.toFixed(1)
+          + '" y2="' + p2.y.toFixed(1) + '" class="' + l.kind + '" style="--c:' + l.c + ';opacity:' + op.toFixed(2) + '"/>');
+      });
+      wires.innerHTML = out.join("");
     }
-    function settle(k){ for (var i=0;i<k;i++) step(); }
-
-    function draw(){
-      if (!ctx) return;
-      var cx = W/2, cy = H/2;
-      ctx.clearRect(0,0,W,H);
-
-      /* 中心とのつながり */
-      ctx.lineWidth = 1;
-      ents.forEach(function(e){
-        if (e.kind !== "node") return;
-        ctx.globalAlpha = 0.08 + 0.32 * (e.score/100) * e.alpha;
-        ctx.strokeStyle = hi[e.id] ? col.accent : col.line;
-        if (hi[e.id]) ctx.globalAlpha = 0.65;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(e.x, e.y); ctx.stroke();
-      });
-
-      /* ニューロン */
-      ctx.strokeStyle = col.accent;
-      rel.forEach(function(l){
-        ctx.globalAlpha = 0.10 + l.w * 0.30;
-        ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
-      });
-
-      /* 材料の糸 */
-      ctx.strokeStyle = col.line;
-      ents.forEach(function(e){
-        if (e.kind !== "mat") return;
-        ctx.globalAlpha = 0.3;
-        ctx.beginPath(); ctx.moveTo(e.parent.x, e.parent.y); ctx.lineTo(e.x, e.y); ctx.stroke();
-      });
-
-      /* 中心 = いまの自分 */
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = col.accent;
-      ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 0.18;
-      ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 0.85; ctx.fillStyle = col.muted;
-      ctx.font = '500 10px "Noto Sans JP", system-ui, sans-serif';
-      ctx.textAlign = "center"; ctx.textBaseline = "top";
-      ctx.fillText("いま", cx, cy + 15);
-
-      /* 材料 */
-      ents.forEach(function(e){
-        if (e.kind !== "mat") return;
-        ctx.globalAlpha = 0.5;
-        ctx.fillStyle = col.muted;
-        ctx.beginPath(); ctx.arc(e.x, e.y, 2.1, 0, Math.PI*2); ctx.fill();
-      });
-
-      /* 項目 */
-      var labels = ents.filter(function(e){ return e.kind === "node"; })
-                       .sort(function(a,b){ return b.score - a.score; });
-      labels.forEach(function(e){
-        if (hi[e.id]){
-          ctx.globalAlpha = 0.3; ctx.fillStyle = col.accent;
-          ctx.beginPath(); ctx.arc(e.x, e.y, e.rad + 7, 0, Math.PI*2); ctx.fill();
-        }
-        ctx.globalAlpha = e.alpha; ctx.fillStyle = e.col;
-        ctx.beginPath(); ctx.arc(e.x, e.y, e.rad, 0, Math.PI*2); ctx.fill();
-      });
-
-      ctx.font = '400 10.5px "Noto Sans JP", system-ui, sans-serif';
-      ctx.textBaseline = "middle";
-      ctx.textAlign = "left";
-      var taken = [{ x:cx-16, y:cy+13, w:32, h:16 }];   /* 「いま」のラベル分を確保 */
-      function clashes(b){
-        for (var k=0;k<taken.length;k++){
-          var p = taken[k];
-          if (!(b.x + b.w < p.x || b.x > p.x + p.w || b.y + b.h < p.y || b.y > p.y + p.h)) return true;
-        }
-        return false;
-      }
-      labels.forEach(function(e, i){
-        if (i > 16 && !hi[e.id]) return;
-        var t = e.ref.title || "";
-        if (t.length > 12) t = t.slice(0,12) + "…";
-        var w = ctx.measureText(t).width;
-        var lx = e.x < W/2 ? e.x + e.rad + 6 : e.x - e.rad - 6 - w;
-        if (lx < 4) lx = e.x + e.rad + 6;
-        if (lx + w > W - 4) lx = e.x - e.rad - 6 - w;
-        lx = Math.max(4, Math.min(W - 4 - w, lx));
-        var box = { x:lx - 2, y:e.y - 8, w:w + 4, h:16 };
-        if (clashes(box) && !hi[e.id]) return;
-        taken.push(box);
-        ctx.globalAlpha = hi[e.id] ? 1 : Math.max(0.55, Math.min(0.92, e.alpha));
-        ctx.fillStyle = hi[e.id] ? col.accent : col.ink;
-        ctx.fillText(t, lx, e.y);
-      });
-      ctx.globalAlpha = 1;
-    }
-
-    function loop(){ step(); draw(); raf = requestAnimationFrame(loop); }
-    function start(){
-      if (raf || !cv) return;
-      resize(); build(true);
-      if (motionOK) loop(); else { settle(260); draw(); }
-    }
-    function stop(){ if (raf){ cancelAnimationFrame(raf); raf = null; } }
-
-    function at(x, y){
-      var best = null, bd = 1e9;
-      ents.forEach(function(e){
-        var d = Math.hypot(e.x - x, e.y - y);
-        var reach = (e.kind === "node" ? e.rad : 3) + 14;
-        if (d < reach && d < bd){ bd = d; best = e; }
-      });
-      return best;
+    function animateWires(ms){
+      wireUntil = performance.now() + ms;
+      if (rafId) return;
+      (function tick(){
+        drawWires();
+        rafId = performance.now() < wireUntil ? requestAnimationFrame(tick) : null;
+      })();
     }
 
     function init(){
-      cv = $("map"); if (!cv) return;
-      ctx = cv.getContext("2d");
-      motionOK = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-      readColors(); resize();
-
-      function pos(ev){
-        var r = cv.getBoundingClientRect();
-        var t = ev.touches ? ev.touches[0] : ev;
-        return { x: t.clientX - r.left, y: t.clientY - r.top };
-      }
-      function down(ev){
-        var q = pos(ev); dragging = at(q.x, q.y); moved = false;
-        if (dragging && ev.cancelable) ev.preventDefault();
-      }
-      function move(ev){
-        if (!dragging) return;
-        var q = pos(ev); dragging.x = q.x; dragging.y = q.y; moved = true;
-        if (ev.cancelable) ev.preventDefault();
-        if (!motionOK) draw();
-      }
-      function up(){
-        if (dragging && !moved) openSheet(dragging.kind === "mat" ? dragging.ref.id : dragging.id);
-        dragging = null;
-      }
-      cv.addEventListener("mousedown", down); cv.addEventListener("touchstart", down, {passive:false});
-      window.addEventListener("mousemove", move); cv.addEventListener("touchmove", move, {passive:false});
-      window.addEventListener("mouseup", up); cv.addEventListener("touchend", up);
-      window.addEventListener("resize", function(){ resize(); refreshTargets(); if (!motionOK) draw(); });
-      document.addEventListener("visibilitychange", function(){
-        if (document.hidden) stop(); else if (view === "map") start();
+      wrap = $("mapView"); stage = $("stage");
+      if (!wrap || !stage) return;
+      ["TL","TR","BL","BR"].forEach(function(q){
+        var svg = document.createElementNS(SVGNS, "svg");
+        svg.setAttribute("class", "blob"); svg.setAttribute("viewBox", "0 0 200 200"); svg.setAttribute("aria-hidden", "true");
+        var path = document.createElementNS(SVGNS, "path"); path.setAttribute("d", BLOB);
+        svg.appendChild(path); stage.appendChild(svg); blobs[q] = svg;
       });
+      wires = document.createElementNS(SVGNS, "svg"); wires.setAttribute("class", "wires"); wires.setAttribute("aria-hidden", "true");
+      stage.appendChild(wires);
+      hubEl = document.createElement("div"); hubEl.className = "hub";
+      hubEl.setAttribute("role", "button"); hubEl.setAttribute("aria-label", "入力欄へ");
+      stage.appendChild(hubEl);
+
+      stage.addEventListener("click", function(e){
+        var b = e.target.closest(".mm");
+        if (b){
+          if (b.dataset.id){ openSheet(b.dataset.id); return; }
+          if (b.dataset.cat){ expanded[b.dataset.cat] = !expanded[b.dataset.cat]; layout(true); return; }
+        }
+        if (e.target.closest(".hub")) input.focus();
+      });
+      var rt = null;
+      window.addEventListener("resize", function(){
+        clearTimeout(rt);
+        rt = setTimeout(function(){ if (view === "map") layout(true); }, 160);
+      });
+      ready = true;
     }
 
     return {
-      init: init, start: start, stop: stop, build: build,
-      highlight: function(ids){
-        hi = {}; (ids||[]).forEach(function(i){ hi[i] = 1; });
-        refreshTargets(); if (!motionOK) draw();
+      init: init,
+      start: function(){ layout(false); },
+      stop: function(){},
+      build: function(force){
+        var ns = signature();
+        if (!force && ns === sig) return;
+        sig = ns; layout(laidOut);
+      },
+      highlight: function(ids, text, isBusy){
+        typed = String(text || "").trim();
+        busy = !!isBusy;
+        if (!ready) return;
+        renderHub();
+        var list = (ids || []).filter(function(id){ return !!find(id); }).slice(0, 4);
+        var key = list.join(",");
+        if (key === candKey) return;
+        candKey = key;
+        clearTimeout(timer);
+        /* 打鍵のたびに跳ねないよう、少し落ち着いてから並べ替える */
+        timer = setTimeout(function(){ cands = list; layout(true); }, list.length ? 240 : 80);
       }
     };
   })();
@@ -1378,12 +1458,8 @@
     $("tabs").hidden     = v === "map";
     $("legend").hidden   = v !== "map";
     $("viewToggle").textContent = v === "map" ? "リストで見る" : "マップで見る";
-    if (v === "map"){ Mind.start(); updateMapHint(); } else Mind.stop();
-  }
-  function updateMapHint(){
-    var h = $("mapHint");
-    h.hidden = nodes.length > 0;
-    if (!h.hidden) h.textContent = "まだ何もありません。上の欄に放り込むと、ここに芽が出ます。";
+    if (v === "map") Mind.start();
+    renderFusen();
   }
 
   /* ============================ イベント ============================ */
