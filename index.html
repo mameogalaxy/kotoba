@@ -59,9 +59,10 @@
     height:var(--app-h, 100%); transform:translateY(var(--app-y, 0px));
     max-width:660px; margin:0 auto; padding:env(safe-area-inset-top,0px) 16px 0}
 
-  .top{background:var(--bg); padding-block:14px 0; flex:none}
-  .brand{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
-  h1{font-family:"Shippori Mincho",serif; font-weight:600; font-size:21px; letter-spacing:.06em; margin:0}
+  .top{background:var(--bg); padding-block:6px 0; flex:none}
+  /* キーボードが出ている間は上の段を隠してマップを広くする。下端の余白も要らない */
+  .kb .top{display:none}
+  .kb .dock{padding-bottom:6px}
   .engine{
     font-size:10.5px; letter-spacing:.09em; color:var(--muted); background:transparent;
     border:1px solid var(--line); border-radius:99px; padding:3px 9px; white-space:nowrap;
@@ -79,6 +80,8 @@
   #input::placeholder{color:var(--muted)}
   .composer .primary{padding:8px 16px; flex:none}
   .composer .mic{flex:none; border-color:transparent; padding:7px 10px}
+  .composer .clear{flex:none; width:30px; height:30px; margin-bottom:4px; border:0; border-radius:50%;
+    background:var(--surface2); color:var(--muted); font-size:17px; line-height:1; padding:0}
   #fusen:not(:empty){margin-bottom:8px; padding-bottom:4px; border-bottom:1px dashed var(--line)}
   #neuronBox .neuron{margin:0 0 8px}
   .spacer{flex:1}
@@ -117,9 +120,9 @@
   .tabs button.on{color:var(--ink); border-bottom-color:var(--accent); font-weight:500}
   .tabs .n{font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums}
 
-  .viewbar{display:flex; align-items:center; gap:8px; padding-block:10px 8px; border-bottom:1px solid var(--line)}
+  .viewbar{display:flex; align-items:center; gap:6px; padding-block:6px 8px; border-bottom:1px solid var(--line)}
   .viewbar .tabs{border:0; padding:0; flex:1}
-  .legend{display:flex; gap:12px; flex:1; align-items:center; font-size:11px; color:var(--muted); flex-wrap:wrap}
+  .legend{display:flex; gap:10px; flex:1; min-width:0; align-items:center; font-size:10.5px; color:var(--muted); flex-wrap:nowrap; white-space:nowrap; overflow:hidden}
   .viewbtn{background:transparent; border:1px solid var(--line); border-radius:99px; padding:4px 12px; font-size:11.5px; color:var(--ink2); white-space:nowrap}
   .viewbtn:hover{background:var(--surface2)}
 
@@ -152,6 +155,9 @@
   .ctx-btn{cursor:pointer; border-color:var(--accent); color:var(--accent)}
   .ctx-picker{display:flex; flex-wrap:wrap; gap:6px; margin:-8px 0 16px; padding:10px; border:1px dashed var(--line); border-radius:12px}
   .ctx-picker .chip{cursor:pointer}
+  .ctx-picker .ctx-add{border-style:dashed; color:var(--accent); border-color:var(--accent)}
+  .ctx-form{display:flex; flex-direction:column; gap:8px; margin:-8px 0 16px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--surface)}
+  .ctx-form .primary{align-self:flex-start}
   .ctx-picker .chip.on{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
   .written{margin:-4px 0 12px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums}
   .mm-more{background:transparent; border:1px dashed var(--line); color:var(--muted); font-size:11px}
@@ -174,11 +180,26 @@
   .hub-typed{font-size:13px; font-weight:700; line-height:1.4; color:var(--ink); word-break:break-all;
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
   .hub-sub{font-size:10px; line-height:1.5; color:var(--muted); letter-spacing:.03em}
+  .hub.compact .hub-in{padding:0 9px; gap:1px}
+  .hub.compact .hub-typed{-webkit-line-clamp:1; font-size:12px}
+  .hub.compact .hub-sub{font-size:9px}
+  .hub.compact .hub-cap{top:-20px; font-size:9.5px}
 
   .lg{display:inline-block; width:18px; height:9px; border-radius:99px; border:1.5px solid var(--muted); margin-right:5px; vertical-align:-1px}
   .lg.note{border-style:dashed}
   .lg.cat{background:var(--muted); border:0}
-  @media (prefers-reduced-motion: reduce){ .mm, .hub, .stage, .blob{transition:none} }
+  .mm.flash{animation:landed 1.8s ease-out}
+  @keyframes landed{
+    0%  { box-shadow:0 0 0 0 var(--c); background-color:color-mix(in srgb, var(--c) 32%, var(--bg)) }
+    35% { box-shadow:0 0 0 9px transparent; }
+    100%{ box-shadow:0 0 0 0 transparent; background-color:var(--bg) }
+  }
+  .drop-tag{position:absolute; left:0; top:0; z-index:5; pointer-events:none; white-space:nowrap;
+    font-size:11px; font-weight:700; color:#fff; background:var(--c); padding:4px 10px; border-radius:99px;
+    box-shadow:0 4px 12px rgba(20,24,31,.18); transition:opacity .4s, transform .4s}
+  .drop-tag::after{content:""; position:absolute; left:50%; bottom:-4px; margin-left:-4px;
+    border:4px solid transparent; border-bottom:0; border-top-color:var(--c)}
+  @media (prefers-reduced-motion: reduce){ .mm, .hub, .stage, .blob{transition:none} .mm.flash{animation:none; outline:2px solid var(--c)} }
   .scroll{flex:1; overflow-y:auto; padding-bottom:40px}
   ul.list{list-style:none; margin:0; padding:0}
   .node{padding:14px 2px; border-bottom:1px solid var(--line); cursor:pointer;
@@ -241,11 +262,6 @@
 
 <div id="app">
   <div class="top">
-    <div class="brand">
-      <h1>脳みそ仕分け</h1>
-      <button class="engine" id="engine" type="button">設定</button>
-    </div>
-
     <div class="viewbar">
       <nav class="tabs" id="tabs">
         <button data-tab="open" class="on" type="button">宙ぶらりん <span class="n" id="nOpen"></span></button>
@@ -257,7 +273,8 @@
         <span>✓ 解決済み</span>
         <span><i class="lg note"></i>メモ</span>
       </div>
-      <button class="viewbtn" id="viewToggle" type="button">リストで見る</button>
+      <button class="engine" id="engine" type="button">設定</button>
+      <button class="viewbtn" id="viewToggle" type="button">リスト</button>
     </div>
   </div>
 
@@ -283,6 +300,7 @@
     <div class="composer">
       <button class="ghost mic" id="mic" type="button" hidden aria-pressed="false">音声</button>
       <textarea id="input" rows="1" placeholder="いま頭にあること" aria-label="放り込む内容"></textarea>
+      <button class="clear" id="clearInput" type="button" hidden aria-label="入力を全部消す">×</button>
       <button class="primary" id="send" type="button">入れる</button>
     </div>
   </div>
@@ -961,11 +979,36 @@
       };
       picker.appendChild(b);
     });
+    var addB = document.createElement("button"); addB.type = "button";
+    addB.className = "chip ctx-add"; addB.textContent = "＋ 新しい枝";
+    picker.appendChild(addB);
+    var form = document.createElement("div"); form.className = "ctx-form"; form.hidden = true;
+    var nameIn = document.createElement("input"); nameIn.className = "box"; nameIn.placeholder = "枝の名前（例: TikTok）"; nameIn.maxLength = 12;
+    var hintIn = document.createElement("input"); hintIn.className = "box"; hintIn.placeholder = "どんなものが入るか（なくても可）"; hintIn.maxLength = 80;
+    var mk = document.createElement("button"); mk.type = "button"; mk.className = "primary"; mk.textContent = "作ってここに入れる";
+    var msg = document.createElement("p"); msg.className = "hint"; msg.style.margin = "0";
+    form.appendChild(nameIn); form.appendChild(hintIn); form.appendChild(mk); form.appendChild(msg);
+    addB.onclick = function(){ form.hidden = !form.hidden; if (!form.hidden) nameIn.focus(); };
+    mk.onclick = function(){
+      var name = nameIn.value.trim();
+      if (!name){ msg.textContent = "名前を入れてください。"; return; }
+      if (name === "その他"){ msg.textContent = "「その他」は最初からあります。"; return; }
+      var c = getCfg(), list = CONTEXTS.filter(function(x){ return x !== "その他"; });
+      if (list.indexOf(name) < 0){
+        if (list.length >= 11){ msg.textContent = "枝は11個までです。設定で使っていない枝を消してください。"; return; }
+        list.push(name);
+      }
+      var hints = Object.assign({}, CONTEXT_HINTS);
+      if (hintIn.value.trim()) hints[name] = hintIn.value.trim();
+      c.contexts = list; c.contextHints = hints; setCfg(c); loadContexts();
+      n.context = name; saveNodes(); render(); openSheet(n.id);
+    };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
     [n.kind, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")]
       .forEach(function(t){ var c=document.createElement("span"); c.className="chip"; c.textContent=t; kv.appendChild(c); });
     sheetBody.appendChild(kv);
     sheetBody.appendChild(picker);
+    sheetBody.appendChild(form);
 
     if (isStale(n)){
       var st = document.createElement("div"); st.className = "stale";
@@ -1156,6 +1199,7 @@
   }
   function clearFusen(){
     input.style.height = "";
+    if ($("clearInput")) $("clearInput").hidden = !input.value;
     clearTimeout(semTimer);
     semantic = []; semanticFor = ""; semanticNote = ""; semanticTs = {}; lastLocalTop = 0; semInFlight = null;
     fusenEl.textContent = ""; Mind.highlight([], "", false);
@@ -1242,6 +1286,7 @@
       target.materials = (target.materials||[]).concat([{ text:text, at:t }]);
       put(target);
       note("「" + target.title + "」の材料にしました。" + pct("未解決の材料", r.isMaterial));
+      Mind.flash(target.id, "ここに入りました");
     } else {
       var isQ = r.unresolved !== null && r.unresolved >= 0.5;
       var n = {
@@ -1255,6 +1300,7 @@
       };
       put(n);
       note((isQ ? "宙ぶらりんに積みました。" : "メモに入れました。") + pct("未解決", r.unresolved));
+      Mind.flash(n.id, (CONTEXTS.indexOf(n.context) >= 0 ? n.context : "その他") + " に入りました");
       if (isQ){ currentTab = "open"; syncTabs(); render(); }
     }
 
@@ -1312,9 +1358,9 @@
   }
   function updateEngine(){
     var b = $("engine"), has = !!getCfg().key;
-    if (!has){ b.className = "engine off"; b.textContent = "APIキー未設定"; return; }
-    if (!verified){ b.className = "engine"; b.textContent = "未接続 · 要確認"; return; }
-    b.className = "engine live"; b.textContent = "Jev 接続済み";
+    if (!has){ b.className = "engine off"; b.textContent = "キー未設定"; return; }
+    if (!verified){ b.className = "engine"; b.textContent = "Jev 未確認"; return; }
+    b.className = "engine live"; b.textContent = "Jev ✓";
   }
   var reclassifying = false;
   async function reclassifyAll(){
@@ -1464,10 +1510,12 @@
       var focus = cands.length > 0;
       var pad = 14, gapCol = 10;
       var colW = Math.floor((W - pad*2 - gapCol) / 2);
-      var catH = 32, itemH = 30, rowGap = 7, blockGap = 20, gapTB = 24, capH = 32;
+      var tight = focus && H < 380;
+      var catH = 32, itemH = 30, rowGap = 7, blockGap = 20, gapTB = 24, capH = tight ? 24 : 32;
       var catW = Math.min(136, Math.round(colW * 0.72));
       var itemW = colW - 10;
-      var hubD = focus ? 124 : Math.round(Math.max(120, Math.min(156, W * 0.38)));
+      var hubD = focus ? (tight ? Math.round(Math.max(76, Math.min(110, H * 0.28))) : 124)
+                       : Math.round(Math.max(120, Math.min(156, W * 0.38)));
       var candRow = itemH + 4, candGap = 9;
 
       var candSet = {}; cands.forEach(function(id){ candSet[id] = 1; });
@@ -1571,6 +1619,7 @@
       wires.setAttribute("viewBox", "0 0 " + W + " " + SH);
 
       hubEl.style.width = hubD + "px"; hubEl.style.height = hubD + "px";
+      hubEl.classList.toggle("compact", hubD < 100);
       hubEl.style.transform = "translate(" + hub.x + "px," + hub.y + "px)";
       renderHub();
 
@@ -1715,6 +1764,31 @@
     return {
       init: init,
       refresh: function(){ clearTimeout(timer); timer = setTimeout(function(){ layout(true); }, 120); },
+      /* 入れた先の項目を見える位置に出して、一瞬光らせる */
+      flash: function(id, label){
+        setTimeout(function(){
+          var n = find(id); if (!n || view !== "map") return;
+          var el = els["i:" + id];
+          if (!el){ expanded[catOf(n)] = true; layout(true); }
+          setTimeout(function(){
+            el = els["i:" + id]; if (!el) return;
+            var sr = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
+            var y = r.top - sr.top, h = wrap.clientHeight;
+            if (y < wrap.scrollTop + 10 || y + r.height > wrap.scrollTop + h - 10)
+              wrap.scrollTo({ top: Math.max(0, y - h/2 + r.height/2), behavior:"smooth" });
+            el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+            var tag = document.createElement("div"); tag.className = "drop-tag";
+            tag.style.setProperty("--c", el.style.getPropertyValue("--c"));
+            tag.textContent = label || "ここに入りました";
+            stage.appendChild(tag);
+            var tx = r.left - sr.left + r.width/2 - tag.offsetWidth/2;
+            tx = Math.max(6, Math.min(wrap.clientWidth - tag.offsetWidth - 6, tx));
+            tag.style.transform = "translate(" + tx + "px," + (y - tag.offsetHeight - 7) + "px)";
+            setTimeout(function(){ tag.style.opacity = "0"; }, 1700);
+            setTimeout(function(){ el.classList.remove("flash"); if (tag.parentNode) tag.parentNode.removeChild(tag); }, 2200);
+          }, el ? 0 : 650);
+        }, 700);
+      },
       start: function(){ layout(false); },
       stop: function(){},
       build: function(force){
@@ -1747,7 +1821,7 @@
     $("listView").hidden = v !== "list";
     $("tabs").hidden     = v === "map";
     $("legend").hidden   = v !== "map";
-    $("viewToggle").textContent = v === "map" ? "リストで見る" : "マップで見る";
+    $("viewToggle").textContent = v === "map" ? "リスト" : "マップ";
     if (v === "map") Mind.start();
     renderFusen();
   }
@@ -1759,6 +1833,12 @@
     input.style.height = Math.min(140, input.scrollHeight) + "px";
   }
   input.addEventListener("input", growInput);
+  function syncClear(){ $("clearInput").hidden = !input.value; }
+  input.addEventListener("input", syncClear);
+  $("clearInput").addEventListener("click", function(){
+    input.value = ""; recallState = null; clearFusen(); syncClear(); renderFusen();
+    input.focus();
+  });
 
   /* iOS はキーボードが出ても画面の高さを変えないので、見えている高さに合わせて組み直す */
   (function(){
@@ -1766,6 +1846,7 @@
     var lastH = 0, root = document.documentElement;
     function fit(){
       var h = Math.round(vv.height), y = Math.max(0, Math.round(vv.offsetTop));
+      root.classList.toggle("kb", window.innerHeight - vv.height > 120);
       root.style.setProperty("--app-h", h + "px");
       root.style.setProperty("--app-y", y + "px");
       if (h !== lastH){ lastH = h; if (view === "map") Mind.refresh(); }
