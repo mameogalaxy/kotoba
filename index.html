@@ -42,10 +42,10 @@
 
   *{box-sizing:border-box}
   [hidden]{display:none !important}
-  html,body{height:100%}
+  html,body{height:100%; overflow:hidden}
   body{
     margin:0; background:var(--bg); color:var(--ink);
-    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+    padding-top:env(safe-area-inset-top,0px);
     font-family:"Noto Sans JP", system-ui, -apple-system, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
     font-size:15px; line-height:1.7; -webkit-font-smoothing:antialiased;
   }
@@ -54,9 +54,9 @@
   a{color:var(--accent)}
   :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
 
-  #app{display:flex; flex-direction:column; height:100%; max-width:660px; margin:0 auto; padding:0 16px}
+  #app{display:flex; flex-direction:column; height:var(--app-h, 100%); max-width:660px; margin:0 auto; padding:0 16px}
 
-  .top{position:sticky; top:0; z-index:5; background:var(--bg); padding-block:18px 10px}
+  .top{background:var(--bg); padding-block:14px 0; flex:none}
   .brand{display:flex; align-items:baseline; justify-content:space-between; gap:10px}
   h1{font-family:"Shippori Mincho",serif; font-weight:600; font-size:21px; letter-spacing:.06em; margin:0}
   .engine{
@@ -65,12 +65,19 @@
   }
   .engine.live{color:var(--done); border-color:var(--done)}
   .engine.off{color:var(--bad); border-color:var(--bad)}
-  .tagline{margin:2px 0 12px; font-size:12.5px; color:var(--muted)}
 
-  .capture{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:12px 12px 10px}
-  #input{width:100%; border:0; background:transparent; resize:none; font:inherit; color:var(--ink); min-height:62px; outline:none; padding:0}
+  .dock{flex:none; margin:0 -16px; padding:8px 16px calc(10px + env(safe-area-inset-bottom,0px));
+    background:var(--bg); border-top:1px solid var(--line)}
+  .composer{display:flex; align-items:flex-end; gap:6px; background:var(--surface);
+    border:1px solid var(--line); border-radius:24px; padding:5px 5px 5px 6px}
+  .composer:focus-within{border-color:var(--accent)}
+  #input{flex:1; min-width:0; border:0; background:transparent; resize:none; font:inherit; font-size:15px;
+    color:var(--ink); line-height:1.55; min-height:0; max-height:140px; overflow-y:auto; outline:none; padding:7px 4px}
   #input::placeholder{color:var(--muted)}
-  .capture-row{display:flex; align-items:center; gap:8px; margin-top:6px}
+  .composer .primary{padding:8px 16px; flex:none}
+  .composer .mic{flex:none; border-color:transparent; padding:7px 10px}
+  #fusen:not(:empty){margin-bottom:8px; padding-bottom:4px; border-bottom:1px dashed var(--line)}
+  #neuronBox .neuron{margin:0 0 8px}
   .spacer{flex:1}
   .ghost{background:transparent; border:1px solid var(--line); border-radius:99px; padding:6px 13px; font-size:12.5px; color:var(--ink2)}
   .ghost:hover{background:var(--surface2)}
@@ -89,7 +96,7 @@
   .fc{grid-column:2 / 4; font-size:11.5px; color:var(--done); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .fusen-item.answered .ft{color:var(--done); font-weight:500}
 
-  .status{margin:8px 0 0; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:7px; flex-wrap:wrap}
+  .status{margin:0 0 6px 6px; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:7px; flex-wrap:wrap}
   .status.warn{color:var(--open)}
   .status.bad{color:var(--bad)}
   .status button{background:transparent;border:0;color:var(--accent);text-decoration:underline;font-size:12px;padding:0}
@@ -107,7 +114,7 @@
   .tabs button.on{color:var(--ink); border-bottom-color:var(--accent); font-weight:500}
   .tabs .n{font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums}
 
-  .viewbar{display:flex; align-items:center; gap:8px; padding-block:14px 8px; border-bottom:1px solid var(--line)}
+  .viewbar{display:flex; align-items:center; gap:8px; padding-block:10px 8px; border-bottom:1px solid var(--line)}
   .viewbar .tabs{border:0; padding:0; flex:1}
   .legend{display:flex; gap:12px; flex:1; align-items:center; font-size:11px; color:var(--muted); flex-wrap:wrap}
   .viewbtn{background:transparent; border:1px solid var(--line); border-radius:99px; padding:4px 12px; font-size:11.5px; color:var(--ink2); white-space:nowrap}
@@ -228,20 +235,6 @@
       <h1>脳みそ仕分け</h1>
       <button class="engine" id="engine" type="button">設定</button>
     </div>
-    <p class="tagline">放り込むだけ。分類はしなくていい。</p>
-
-    <div class="capture">
-      <textarea id="input" rows="2" placeholder="いま頭にあることを、そのまま。&#10;「〇〇ってどうなんだろう」でも「あれ買っとく」でも。"></textarea>
-      <div id="fusen"></div>
-      <div class="capture-row">
-        <button class="ghost" id="mic" hidden aria-pressed="false">音声</button>
-        <span class="spacer"></span>
-        <button class="primary" id="send">入れる</button>
-      </div>
-      <p class="status" id="status" hidden></p>
-    </div>
-
-    <div id="neuronBox"></div>
 
     <div class="viewbar">
       <nav class="tabs" id="tabs">
@@ -272,6 +265,17 @@
       1回の入力につき、9つの判定を1リクエストにまとめて投げています。
       データはこの端末の localStorage にだけ保存され、どこにも送信されません。
     </p>
+  </div>
+
+  <div class="dock">
+    <div id="neuronBox"></div>
+    <div id="fusen"></div>
+    <p class="status" id="status" hidden></p>
+    <div class="composer">
+      <button class="ghost mic" id="mic" type="button" hidden aria-pressed="false">音声</button>
+      <textarea id="input" rows="1" placeholder="いま頭にあることを、そのまま" aria-label="放り込む内容"></textarea>
+      <button class="primary" id="send" type="button">入れる</button>
+    </div>
   </div>
 </div>
 
@@ -911,6 +915,7 @@
     finally { semInFlight = null; renderFusen(); }
   }
   function clearFusen(){
+    input.style.height = "";
     clearTimeout(semTimer);
     semantic = []; semanticFor = ""; lastLocalTop = 0; semInFlight = null;
     fusenEl.textContent = ""; Mind.highlight([], "", false);
@@ -1203,8 +1208,8 @@
       var midTop = topBottom + (topH ? gapTB : 0);
       var hubY = midTop + capH;
       var botTop = midTop + midH + (botH ? gapTB : 0);
-      /* 候補を出している間は、中心を画面上端まで上げられるだけの余白を下に足す（キーボード対策） */
-      if (focus) SH = Math.max(SH, midTop - 8 + H);
+      /* 候補を出している間は、中心のまとまりを画面の真ん中まで動かせるだけの余白を下に足す */
+      if (focus) SH = Math.max(SH, midTop + H);
 
       hub = { x:(W - hubD)/2, y:hubY, d:hubD, top:midTop };
       lastH = H;
@@ -1324,7 +1329,10 @@
       animateWires(quiet ? 0 : 720);
 
       if (first) wrap.scrollTop = Math.max(0, hubCy - H/2);
-      else if (focus) wrap.scrollTo({ top: Math.max(0, midTop - 8), behavior: "smooth" });
+      else if (focus){
+        var bTop = midTop - 6, bBot = hubY + hubD + candH + 10, bH = bBot - bTop;
+        wrap.scrollTo({ top: Math.max(0, bH < H ? bTop - (H - bH)/2 : bTop), behavior: "smooth" });
+      }
       else if (animate) wrap.scrollTo({ top: Math.max(0, hubCy - H/2), behavior: "smooth" });
     }
 
@@ -1404,6 +1412,7 @@
 
     return {
       init: init,
+      refresh: function(){ clearTimeout(timer); timer = setTimeout(function(){ layout(true); }, 120); },
       start: function(){ layout(false); },
       stop: function(){},
       build: function(force){
@@ -1441,6 +1450,28 @@
 
   /* ============================ イベント ============================ */
   send.addEventListener("click", capture);
+  function growInput(){
+    input.style.height = "auto";
+    input.style.height = Math.min(140, input.scrollHeight) + "px";
+  }
+  input.addEventListener("input", growInput);
+
+  /* iOS はキーボードが出ても画面の高さを変えないので、見えている高さに合わせて組み直す */
+  (function(){
+    var vv = window.visualViewport; if (!vv) return;
+    var last = 0;
+    function fit(){
+      var h = Math.round(vv.height);
+      if (h === last) return;
+      last = h;
+      document.documentElement.style.setProperty("--app-h", h + "px");
+      window.scrollTo(0, 0);
+      if (view === "map") Mind.refresh();
+    }
+    vv.addEventListener("resize", fit);
+    vv.addEventListener("scroll", function(){ window.scrollTo(0, 0); });
+    fit();
+  })();
   input.addEventListener("input", function(){ renderFusen(); scheduleSemantic(); });
   input.addEventListener("keydown", function(e){
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter"){ e.preventDefault(); capture(); }
