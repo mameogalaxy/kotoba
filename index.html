@@ -94,6 +94,17 @@
   .composer{display:flex; align-items:flex-end; gap:6px; background:var(--surface);
     border:1px solid var(--line); border-radius:24px; padding:5px 5px 5px 6px}
   .composer:focus-within{border-color:var(--accent)}
+  .inwrap{flex:1; min-width:0; position:relative; display:flex}
+  .mirror{position:absolute; inset:0; padding:7px 4px; font:inherit; font-size:16px; line-height:1.5; white-space:pre-wrap; overflow-wrap:break-word;
+    color:transparent; pointer-events:none; overflow:hidden; border-radius:10px}
+  .mirror .ml{display:block; min-height:1.5em; border-radius:6px}
+  .mirror .cut{position:relative}
+  .mirror .cut::before{content:""; position:absolute; left:0; right:0; top:50%; border-top:2px dashed var(--accent)}
+  .mirror .cut::after{content:"✂ ここで分かれます"; position:absolute; right:2px; top:50%; transform:translateY(-50%); padding:0 6px;
+    background:var(--surface); color:var(--accent); font-size:11px; font-weight:700; line-height:1.4}
+  .mirror .cuttop{box-shadow:inset 0 2px 0 var(--accent)}
+  .splithint{margin:0 0 6px 6px; font-size:12px; font-weight:700; color:var(--accent)}
+  #input{position:relative; z-index:1;}
   #input{flex:1; min-width:0; border:0; background:transparent; resize:none; font:inherit; font-size:16px;
     color:var(--ink); line-height:1.5; min-height:0; max-height:140px; overflow-y:auto; outline:none; padding:7px 4px}
   #input::placeholder{color:var(--muted)}
@@ -398,11 +409,12 @@
       </div>
       <div class="pm-cats" id="pmCats" hidden></div>
     </div>
+    <p class="splithint" id="splitHint" hidden></p>
     <div class="composer">
       <button class="plus" id="plus" type="button" aria-label="追加メニュー" aria-expanded="false">＋</button>
       <span class="cattag" id="catTag" hidden><span id="catName"></span><input id="catNew" type="text" maxlength="12" placeholder="枝の名前" autocomplete="off"><button type="button" id="catX" aria-label="枝の指定をやめる">×</button></span>
       <button class="mic" id="mic" type="button" hidden aria-pressed="false" aria-label="音声で入力"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
-      <textarea id="input" rows="1" placeholder="いま頭にあること" aria-label="放り込む内容"></textarea>
+      <div class="inwrap"><div class="mirror" id="inputMirror" aria-hidden="true" hidden></div><textarea id="input" rows="1" placeholder="いま頭にあること" aria-label="放り込む内容"></textarea></div>
       <button class="clear" id="clearInput" type="button" hidden aria-label="入力を全部消す">×</button>
       <button class="primary" id="send" type="button">入れる</button>
     </div>
@@ -2223,6 +2235,7 @@
   }
   function clearFusen(){
     input.style.height = "";
+    if ($("inputMirror")) setTimeout(renderMirror, 0);
     if ($("wordbar")){ $("wordbar").hidden = true; $("wordbar").textContent = ""; }
     if ($("clearInput")) $("clearInput").hidden = !input.value;
     clearTimeout(semTimer);
@@ -2599,7 +2612,7 @@
       .some(function(t){ return t && detectSecret(t).hit; });
   }
   function restoreInput(text){
-    input.value = text; growInput(); syncClear(); input.focus(); send.disabled = false;
+    input.value = text; growInput(); syncClear(); renderMirror(); input.focus(); send.disabled = false;
   }
   /* Face ID の登録がまだなら、ここで登録してから続ける */
   function askLock(why, then, openly, cancel){
@@ -2967,6 +2980,10 @@
       if (parts.length > 1){ await captureMany(parts, text, ctx); return; }
       await captureSecret(text, null, false, ctx); return;
     }
+
+    /* 空行があれば、見えている線の通りに1つずつ入れる */
+    var blocks0 = splitBlocks(text);
+    if (blocks0.length > 1){ await captureMany(blocks0, text, ctx); return; }
 
     if (!getCfg().key){
       var raw0 = rawNode(text); if (ctx) raw0.context = ctx;
@@ -4110,6 +4127,47 @@
   }
 
 
+
+  /* ============================ 入力中の分かれ目 ============================ */
+  /* 入れたときに何件に分かれるかを、打っている最中に見せる。入力欄の後ろに同じ折り返しの層を置き、
+     項目ごとに薄い色を敷いて、分かれ目に線を引く */
+  var PART_TINTS = ["#4f86c6", "#e0795b", "#57a773", "#a86cc1", "#d9a441", "#4bb3b3"];
+  function splitPreview(text){
+    var lines = String(text).split("\n");
+    var secret = detectSecret(text).hit, parts = secret ? splitEntries(text) : splitBlocks(text);
+    if (parts.length < 2) return { n: parts.length, lines: lines, starts: [], secret: secret };
+    var starts = [], ptr = 0;
+    parts.forEach(function(p){
+      var first = p.split("\n")[0].trim();
+      for (var i = ptr; i < lines.length; i++) if (first && lines[i].trim() === first){ starts.push(i); ptr = i + 1; break; }
+    });
+    return { n: parts.length, lines: lines, starts: starts, secret: secret };
+  }
+  function renderMirror(){
+    var m = $("inputMirror"), hint = $("splitHint"), pv = splitPreview(input.value);
+    if (pv.n < 2 || pv.starts.length < 2){ m.hidden = true; m.textContent = ""; hint.hidden = true; return; }
+    var cutLine = {}, cutTop = {}, part = [], k = -1, si = 0;
+    pv.starts.slice(1).forEach(function(st){
+      var j = st - 1; while (j >= 0 && !pv.lines[j].trim()) j--;
+      if (j + 1 < st) cutLine[j + 1] = 1; else cutTop[st] = 1;
+    });
+    for (var i = 0; i < pv.lines.length; i++){ if (si < pv.starts.length && pv.starts[si] === i){ k = si; si++; } part.push(k); }
+    m.textContent = "";
+    pv.lines.forEach(function(line, i){
+      var el = document.createElement("span"); el.className = "ml";
+      el.textContent = line || "​";
+      var blank = !line.trim(), nextPart = part[i + 1] !== undefined && part[i + 1] !== part[i];
+      if (cutLine[i]) el.classList.add("cut");
+      else if (part[i] >= 0 && !(blank && (cutLine[i - 1] || nextPart))){
+        el.style.background = "color-mix(in srgb, " + PART_TINTS[part[i] % PART_TINTS.length] + " 16%, transparent)";
+      }
+      if (cutTop[i]) el.classList.add("cuttop");
+      m.appendChild(el);
+    });
+    m.hidden = false; m.scrollTop = input.scrollTop;
+    hint.textContent = "✂ " + pv.n + "件に分けて入れます" + (pv.secret ? "（ログイン情報ごと）" : "（空行で分かれます）");
+    hint.hidden = false;
+  }
   /* ============================ ＋ メニュー（枝を指定して入れる） ============================ */
   /* ＋ → カテゴリー → 枝を選ぶと、入力欄の頭に色つきの札が付く。札の枝に、隣に書いた文を入れる。
      「＋ 新しい枝」を選ぶと札の中に名前を書ける（札だけで送れば枝を作るだけ） */
@@ -4150,6 +4208,7 @@
 
   /* ============================ イベント ============================ */
   send.addEventListener("click", capture);
+  input.addEventListener("scroll", function(){ $("inputMirror").scrollTop = input.scrollTop; });
   $("plus").addEventListener("click", function(){ if ($("plusMenu").hidden) openPlus(); else closePlus(); });
   $("pmCat").addEventListener("click", showCatChoices);
   $("catX").addEventListener("click", function(){ clearCatTag(); input.focus(); });
@@ -4193,6 +4252,7 @@
   input.addEventListener("input", function(){
     if (recallState && input.value.trim()) recallState = null;
     if (input.value.trim()){ todayDismissed = true; Mind.unhold(); }
+    renderMirror();
     renderWordbar(); scheduleWordJev();
     renderFusen(); scheduleSemantic();
   });
