@@ -222,7 +222,7 @@
   .ctx-form{display:flex; flex-direction:column; gap:8px; margin:-8px 0 16px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--surface)}
   .ctx-form .primary{align-self:flex-start}
   .ctx-picker .chip.on{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
-  .title-edit, .mat-edit{display:block; width:100%; border:0; background:transparent; resize:none; overflow:hidden;
+  .title-edit, .mat-edit{display:block; width:100%; max-width:100%; box-sizing:border-box; overflow-wrap:anywhere; word-break:break-word; border:0; background:transparent; resize:none; overflow:hidden;
     padding:3px 6px; margin:0 -6px; border-radius:8px; color:inherit; cursor:text; -webkit-appearance:none; appearance:none}
   .title-edit{font-family:"Shippori Mincho",serif; font-weight:600; font-size:19px; line-height:1.55; color:var(--ink); margin-bottom:8px}
   .mat-edit{font:inherit; font-size:16px; line-height:1.6; color:var(--ink2)}
@@ -302,7 +302,7 @@
   .foot{padding:26px 2px 8px; font-size:11.5px; color:var(--muted); line-height:1.8; border-top:1px solid var(--line); margin-top:26px}
 
   .sheet{position:fixed; left:0; right:0; top:var(--app-y, 0px); height:var(--app-h, 100%); z-index:20; background:rgba(20,24,31,.34); display:flex; align-items:flex-end; justify-content:center}
-  .sheet-inner{background:var(--bg); width:100%; max-width:660px; max-height:90%; border-radius:18px 18px 0 0;
+  .sheet-inner{background:var(--bg); width:100%; max-width:660px; max-height:90%; overflow-x:hidden; box-sizing:border-box; border-radius:18px 18px 0 0;
     box-shadow:var(--shadow); display:flex; flex-direction:column; padding:0 16px calc(18px + env(safe-area-inset-bottom,0px))}
   .tsheet{align-items:flex-start; z-index:19}
   .tsheet .sheet-inner{border-radius:0 0 18px 18px; max-height:80%; padding-top:env(safe-area-inset-top,0px); padding-bottom:12px; animation:dropIn .26s ease-out}
@@ -347,12 +347,14 @@
   .link.app{background:var(--accent); color:var(--on-accent)}
   .link-hint{flex-basis:100%; margin:2px 2px 0; font-size:12px}
   .chip-x{cursor:pointer; font:inherit}
-  .secret{border:1px dashed var(--line); border-radius:var(--radius); padding:12px 13px; margin-bottom:12px; background:var(--surface)}
+  .secret{overflow:hidden; max-width:100%; box-sizing:border-box; border:1px dashed var(--line); border-radius:var(--radius); padding:12px 13px; margin-bottom:12px; background:var(--surface)}
   .secret .primary{margin-top:10px}
   .secret time{font-size:11px; color:var(--muted)}
   .fields{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px}
   .fields .copy{padding:8px 13px; font-size:13px; border-radius:99px; background:var(--accent-soft); color:var(--accent); border-color:transparent}
   .secret-mask{margin:0; font-size:14px; color:var(--ink2); white-space:pre-wrap; word-break:break-all}
+  .sheet, .sheet-body{overflow-x:hidden}
+  .fields{max-width:100%}
   .concl{background:var(--done-soft); border:1px solid var(--done); border-radius:var(--radius); padding:12px 13px; font-size:14px}
   .concl time{display:block; font-size:11px; color:var(--muted); margin-top:6px}
   textarea.box, input.box{
@@ -4586,6 +4588,9 @@
     function caretFix(){
       clearTimeout(caretT);
       caretT = setTimeout(function(){
+        /* 長い文字で横に押し出されたら、すぐ元に戻す */
+        if (window.scrollX) window.scrollTo(0, window.scrollY);
+        Array.prototype.forEach.call(document.querySelectorAll(".sheet, .sheet-inner, .sheet-body, #app"), function(x){ if (x.scrollLeft) x.scrollLeft = 0; });
         var el = document.activeElement;
         if (!el || !/^(TEXTAREA|INPUT)$/.test(el.tagName) || el.type === "file") return;
         try {
@@ -4596,6 +4601,8 @@
       }, 120);
     }
     document.addEventListener("focusin", function(){ setTimeout(caretFix, 350); });
+    document.addEventListener("input", function(){ if (window.scrollX) caretFix(); }, true);
+    window.addEventListener("scroll", function(){ if (window.scrollX) caretFix(); });
     vv.addEventListener("resize", fit);
     vv.addEventListener("scroll", fit);
     fit();
