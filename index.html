@@ -698,8 +698,8 @@
       },
       isMaterial: {
         type:"noul",
-        instructions:"この断片は、既存の未解決の問いを進める材料（調べた結果・関連する気づき・追加情報）か。",
-        criteria:{ "true":"既存の問いのどれかに直接関係する", "false":"どの既存の問いとも関係しない" }
+        instructions:"この断片は、既存の未解決の問いを進める材料（調べた結果・関連する気づき・追加情報）か。同じ用件・同じ人・同じ物についての話のときだけ true。日付や時刻が同じ、同じ日の予定というだけでは関係があるとしない。",
+        criteria:{ "true":"既存の問いのどれかと同じ話で、直接関係する", "false":"どの既存の問いとも別の話（日付が同じだけのものも含む）" }
       },
       materialOf: {
         type:"choice",
@@ -708,7 +708,7 @@
       },
       isAnswer: {
         type:"noul",
-        instructions:"この断片は、既存の未解決の問いに対する『答え』になっているか。単に関連するだけなら false。",
+        instructions:"この断片は、既存の未解決の問いに対する『答え』になっているか。単に関連するだけ、日付が同じだけなら false。",
         criteria:{ "true":"既存の問いの結論として成立する内容を含む", "false":"関連するだけ、または無関係" }
       },
       answerOf: {
@@ -1607,8 +1607,11 @@
         var foot = document.createElement("div"); foot.className = "mat-foot";
         var t = document.createElement("time"); t.textContent = when(m.at, true) + " · " + ago(m.at); foot.appendChild(t);
         if ((n.materials || []).length > 1){
+          var sp = document.createElement("button"); sp.type = "button"; sp.className = "copy"; sp.textContent = "分ける";
+          sp.style.marginLeft = "auto";
+          sp.onclick = function(){ splitMaterial(n, m); };
+          foot.appendChild(sp);
           var del = document.createElement("button"); del.type = "button"; del.className = "copy"; del.textContent = "消す";
-          del.style.marginLeft = "auto";
           del.onclick = function(){
             if (!window.confirm("この材料を消しますか？")) return;
             editNode(n, function(){ n.materials = n.materials.filter(function(x){ return x !== m; }); });
@@ -1673,6 +1676,28 @@
     var b = document.createElement("button"); b.type = "button"; b.className = "ghost"; b.textContent = "🔒 隠す";
     b.onclick = function(){ hideNode(n, false); };
     return b;
+  }
+  /* くっついてしまった材料を、別の項目として取り出す。枝は Jev が振り分け直す */
+  function splitMaterial(n, m){
+    if (!window.confirm("「" + titleOf(m.text) + "」を別の項目にしますか？")) return;
+    var wasTitle = n.title === m.text || n.title === titleOf(m.text);
+    n.materials = (n.materials || []).filter(function(x){ return x !== m; });
+    if (wasTitle && n.materials.length) n.title = titleOf(n.materials.slice().sort(function(a, b){ return a.at - b.at; })[0].text);
+    var nn = rawNode(m.text);
+    nn.createdAt = m.at || Date.now(); nn.materials[0].at = nn.createdAt; nn.context = n.context; nn.kind = "事実メモ"; fixKind(nn);
+    put(n); put(nn);
+    sheetNote = { id:n.id, text:"「" + nn.title + "」を別の項目にしました。" + (getCfg().key ? "Jev が枝を振り分けています…" : ""), busy: !!getCfg().key };
+    openSheet(n.id);
+    if (!getCfg().key) return;
+    reclassifyNode(nn).then(function(){
+      fixKind(nn); saveNodes(); render(); judgeTodaySoon();
+      sheetNote = { id:n.id, text:"「" + nn.title + "」を別の項目にして、" + ctxName(nn.context) + " に入れました。" };
+      if (openId === n.id) refreshSheet(n);
+      pendingFlash = { id:nn.id, label: ctxName(nn.context) + " に入りました" };
+    }).catch(function(){
+      sheetNote = { id:n.id, text:"別の項目にしました（枝は「" + ctxName(nn.context) + "」のままです）。", bad:true };
+      if (openId === n.id) refreshSheet(n);
+    });
   }
   function addDelete(box, n){
     var sp = document.createElement("span"); sp.className = "spacer"; box.appendChild(sp);
@@ -2837,6 +2862,8 @@
     var answerTo = (r.isAnswer !== null && r.isAnswer >= 0.5) ? resolveNode(r.answerOf) : null;
     /* 答えは材料でもある。材料の宛先が取れなければ答えの宛先を使う。 */
     if (!target && answerTo) target = answerTo;
+    /* 新しい文と相手の枝が違う（仕事の研修と家族の誕生日など）なら、くっつけずに別の項目にする */
+    if (target && !sameTopic(r, target)){ target = null; answerTo = null; }
 
     if (target){
       target.materials = (target.materials||[]).concat([{ text:text, at:t }]);
@@ -2866,6 +2893,10 @@
 
     if (answerTo && answerTo.status === "open") showNeuron(answerTo, r.isAnswer, text);
     judgeTodaySoon();
+  }
+  function sameTopic(r, target){
+    var a = ctxName(r.context), b = ctxName(target.context);
+    return a === b || a === "その他" || b === "その他";
   }
   function pct(label, p){
     return (typeof p === "number") ? "（" + label + " " + Math.round(p*100) + "%）" : "";
