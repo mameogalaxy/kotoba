@@ -228,7 +228,8 @@
     35% { box-shadow:0 0 0 9px transparent; }
     100%{ box-shadow:0 0 0 0 transparent; background-color:var(--bg) }
   }
-  .drop-tag{position:absolute; left:0; top:0; z-index:5; pointer-events:none; white-space:nowrap;
+  .mm.landing{box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 45%, transparent); background-color:color-mix(in srgb, var(--c) 14%, var(--bg))}
+  .drop-tag{position:absolute; left:0; top:0; z-index:5; white-space:nowrap; border:0; cursor:pointer; font-family:inherit;
     font-size:11px; font-weight:700; color:#fff; background:var(--c); padding:4px 10px; border-radius:99px;
     box-shadow:0 4px 12px rgba(20,24,31,.18); transition:opacity .4s, transform .4s}
   .drop-tag::after{content:""; position:absolute; left:50%; bottom:-4px; margin-left:-4px;
@@ -2391,9 +2392,9 @@
       /* コードで見つけたときは Jev に何も送っていないので、●にした見出しだけで枝を決める */
       if (!r && getCfg().key){ try { await reclassifyNode(n); } catch(e){} n.status = "note"; }
       await saveNew(n, function(t, how){
-        if (!quiet) note(how === "replaced" ? "前の「" + t.title + "」を新しい内容に置き換えました（隠したまま）。"
-          : "見られたくない内容っぽいので、隠して保存しました。見るときは項目をタップして Face ID。");
-        Mind.flash(t.id, how === "replaced" ? "🔒 置き換えました" : "🔒 隠しました");
+        if (!quiet) noteLanded(t, how === "replaced" ? "前の「" + t.title + "」を新しい内容に置き換えました（隠したまま）。"
+          : "見られたくない内容っぽいので、隠して " + ctxName(t.context) + " に入れました。見るときは Face ID。");
+        Mind.flash(t.id, how === "replaced" ? "🔒 置き換えました" : "🔒 " + ctxName(t.context) + " に隠しました");
       });
     } catch(e){
       restoreInput(text);
@@ -2650,6 +2651,16 @@
     statusEl.textContent = msg;
     if (!cls) setTimeout(function(){ if (statusEl.textContent === msg) statusEl.hidden = true; }, 4500);
   }
+  /* 入れたあとの知らせ。どこに入ったかと「開く」を10秒出す */
+  function noteLanded(n, msg){
+    statusEl.hidden = false; statusEl.className = "status"; statusEl.textContent = "";
+    statusEl.appendChild(document.createTextNode(msg + " "));
+    var b = document.createElement("button"); b.type = "button"; b.textContent = "開く";
+    b.onclick = function(){ statusEl.hidden = true; Mind.unhold(); openSheet(n.id); };
+    statusEl.appendChild(b);
+    var mark = msg;
+    setTimeout(function(){ if (statusEl.firstChild && statusEl.firstChild.textContent === mark + " ") statusEl.hidden = true; }, 10000);
+  }
   function noteWithSettings(msg){
     statusEl.hidden = false; statusEl.className = "status bad"; statusEl.textContent = "";
     statusEl.appendChild(document.createTextNode(msg + " "));
@@ -2740,7 +2751,7 @@
     if (target){
       target.materials = (target.materials||[]).concat([{ text:text, at:t }]);
       put(target);
-      note("「" + target.title + "」の材料にしました。" + pct("未解決の材料", r.isMaterial));
+      noteLanded(target, "「" + target.title + "」（" + ctxName(target.context) + "）の材料にしました。" + pct("未解決の材料", r.isMaterial));
       Mind.flash(target.id, "ここに入りました");
     } else {
       var isQ = r.unresolved !== null && r.unresolved >= 0.5;
@@ -2755,9 +2766,9 @@
       };
       if (r.repeat) n.repeat = r.repeat;
       saveNew(n, function(t, how){
-        if (how === "replaced"){ note("前の「" + t.title + "」を新しい内容に置き換えました。"); Mind.flash(t.id, "置き換えました"); return; }
-        note((isQ ? "宙ぶらりんに積みました。" : "メモに入れました。") + pct("未解決", r.unresolved));
-        Mind.flash(t.id, (CONTEXTS.indexOf(t.context) >= 0 ? t.context : "その他") + " に入りました");
+        if (how === "replaced"){ noteLanded(t, "前の「" + t.title + "」を新しい内容に置き換えました。"); Mind.flash(t.id, "置き換えました"); return; }
+        noteLanded(t, "「" + t.title + "」を " + ctxName(t.context) + " に入れました（" + (isQ ? "宙ぶらりん" : "メモ") + "）。");
+        Mind.flash(t.id, ctxName(t.context) + " に入りました");
         if (isQ){ currentTab = "open"; syncTabs(); render(); }
       });
     }
@@ -3408,11 +3419,47 @@
       animateWires(quiet ? 0 : 720);
 
       if (first) wrap.scrollTop = Math.max(0, hubCy - H/2);
+      else if (holding()) setTimeout(placeHold, 760);
       else if (focus){
         var bTop = midTop - 6, bBot = hubY + hubD + candH + 10, bH = bBot - bTop;
         wrap.scrollTo({ top: Math.max(0, bH < H ? bTop - (H - bH)/2 : bTop), behavior: "smooth" });
       }
       else if (animate) wrap.scrollTo({ top: Math.max(0, hubCy - H/2), behavior: "smooth" });
+    }
+
+    var hold = null, holdTimer = null, HOLD_MS = 7000;
+    function holding(){ return !!(hold && Date.now() < hold.until && !input.value.trim() && view === "map"); }
+    function clearHold(){
+      clearTimeout(holdTimer);
+      if (hold){
+        var el = els["i:" + hold.id]; if (el) el.classList.remove("landing", "flash");
+        var tag = hold.tag;
+        if (tag){ tag.style.opacity = "0"; setTimeout(function(){ if (tag.parentNode) tag.parentNode.removeChild(tag); }, 420); }
+      }
+      hold = null;
+    }
+    function placeHold(){
+      if (!holding()) return;
+      var n = find(hold.id); if (!n){ clearHold(); return; }
+      var el = els["i:" + hold.id];
+      if (!el){ if (!expanded[catOf(n)]){ expanded[catOf(n)] = true; layout(true); } return; }
+      var sr = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
+      var y = r.top - sr.top, h = wrap.clientHeight;
+      if (y < wrap.scrollTop + 40 || y + r.height > wrap.scrollTop + h - 10)
+        wrap.scrollTo({ top: Math.max(0, y - h/2 + r.height/2), behavior:"smooth" });
+      if (!el.classList.contains("landing")){ el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash", "landing"); }
+      var tag = hold.tag;
+      if (!tag || !tag.parentNode){
+        tag = hold.tag = document.createElement("button"); tag.type = "button"; tag.className = "drop-tag";
+        var id = hold.id;
+        tag.onclick = function(e){ e.stopPropagation(); clearHold(); openSheet(id); };
+        stage.appendChild(tag);
+      }
+      tag.style.setProperty("--c", el.style.getPropertyValue("--c"));
+      tag.textContent = hold.label + "  · 開く";
+      var tx = r.left - sr.left + r.width/2 - tag.offsetWidth/2;
+      tx = Math.max(6, Math.min(wrap.clientWidth - tag.offsetWidth - 6, tx));
+      tag.style.transform = "translate(" + tx + "px," + (y - tag.offsetHeight - 7) + "px)";
     }
 
     /* ---- 線: 動いている間だけ要素の実位置を追いかけて引き直す ---- */
@@ -3502,30 +3549,14 @@
       init: init,
       refresh: function(){ clearTimeout(timer); timer = setTimeout(function(){ layout(true); }, 120); },
       /* 入れた先の項目を見える位置に出して、一瞬光らせる */
+      /* 入れた項目の場所を7秒ほど見せ続ける。そのあいだに描き直しが入っても中心へ戻らず、そこに留まる */
       flash: function(id, label){
-        setTimeout(function(){
-          var n = find(id); if (!n || view !== "map") return;
-          var el = els["i:" + id];
-          if (!el){ expanded[catOf(n)] = true; layout(true); }
-          setTimeout(function(){
-            el = els["i:" + id]; if (!el) return;
-            var sr = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
-            var y = r.top - sr.top, h = wrap.clientHeight;
-            if (y < wrap.scrollTop + 10 || y + r.height > wrap.scrollTop + h - 10)
-              wrap.scrollTo({ top: Math.max(0, y - h/2 + r.height/2), behavior:"smooth" });
-            el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
-            var tag = document.createElement("div"); tag.className = "drop-tag";
-            tag.style.setProperty("--c", el.style.getPropertyValue("--c"));
-            tag.textContent = label || "ここに入りました";
-            stage.appendChild(tag);
-            var tx = r.left - sr.left + r.width/2 - tag.offsetWidth/2;
-            tx = Math.max(6, Math.min(wrap.clientWidth - tag.offsetWidth - 6, tx));
-            tag.style.transform = "translate(" + tx + "px," + (y - tag.offsetHeight - 7) + "px)";
-            setTimeout(function(){ tag.style.opacity = "0"; }, 1700);
-            setTimeout(function(){ el.classList.remove("flash"); if (tag.parentNode) tag.parentNode.removeChild(tag); }, 2200);
-          }, el ? 0 : 650);
-        }, 700);
+        clearHold();
+        hold = { id:id, label: label || "ここに入りました", until: Date.now() + HOLD_MS };
+        holdTimer = setTimeout(clearHold, HOLD_MS);
+        setTimeout(placeHold, 700);
       },
+      unhold: function(){ clearHold(); },
       start: function(){ layout(false); },
       stop: function(){},
       build: function(force){
@@ -3595,7 +3626,7 @@
   })();
   input.addEventListener("input", function(){
     if (recallState && input.value.trim()) recallState = null;
-    if (input.value.trim()) todayDismissed = true;
+    if (input.value.trim()){ todayDismissed = true; Mind.unhold(); }
     renderWordbar(); scheduleWordJev();
     renderFusen(); scheduleSemantic();
   });
