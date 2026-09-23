@@ -2258,9 +2258,22 @@
     }
     return b;
   }
+  function oneCharMatches(ch){
+    var c = ch.toLowerCase(), latin = /[a-z0-9]/.test(c);
+    var re = latin ? new RegExp("(^|[^a-z0-9])" + c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([^a-z0-9]|$)", "i") : null;
+    return nodes.filter(function(n){
+      var t = String(n.title || "").replace(/^[🔗🔒\s]+/, "");
+      return latin ? re.test(t) : t.indexOf(ch) >= 0;
+    }).sort(function(a, b){ return nowScore(b) - nowScore(a); }).slice(0, 4);
+  }
   function renderFusen(){
     var text = input.value.trim();
     fusenEl.textContent = "";
+    /* 1文字でも、見出しにその語がある項目は出す（「X」なら X のアプリ。英数字は単語として、ほかの字は見出しの中の字として） */
+    if (text.length === 1 && !recallState){
+      var one = oneCharMatches(text);
+      if (one.length){ showPicked(one.map(function(n){ return { n:n, why:"", ts:0 }; }), text, ""); return; }
+    }
     if (text.length < 2){
       lastLocalTop = 0;
       if (!text && recallState){ showPicked(recallState.picked, recallState.text, recallState.note); return; }
