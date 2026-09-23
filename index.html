@@ -1619,6 +1619,10 @@
       if (isNew) onBranchesAdded([name], n.id);
     };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
+    if (branchFormFor !== null){
+      picker.hidden = false; form.hidden = false; nameIn.value = branchFormFor; branchFormFor = null;
+      setTimeout(function(){ nameIn.focus(); nameIn.select(); }, 60);
+    }
     var ti = todayInfo(n), extra = [], rpt = repeatOf(n);
     if (rpt) extra.push("🔁 " + rpt.label + (rpt.next ? " · 次 " + (rpt.next.days === 0 ? "今日" : rpt.next.days === 1 ? "明日" : when(rpt.next.at).split(" ")[0]) : "") + (rpt.age ? "（" + rpt.age + "）" : ""));
     if (ti && !ti.rep){
@@ -1816,7 +1820,7 @@
     return b;
   }
 
-  var sheetNote = null, pendingFlash = null, sheetDirty = false, focusAddMat = false;
+  var sheetNote = null, pendingFlash = null, sheetDirty = false, focusAddMat = false, branchFormFor = null;
 
   function autoGrow(el){ el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
   /* 表示している文字そのものを入力欄にして、タップした場所から直せるようにする。
@@ -2887,6 +2891,7 @@
 
   async function capture(){
     var text = input.value.trim(); if (!text) return;
+    if (branchCommand(text)) return;
     captureText(text, false);
   }
   /* openly: 「隠さずに保存」を選んだあと。見られたくない内容かどうかはもう聞かない */
@@ -2978,6 +2983,8 @@
         if (how === "replaced"){ noteLanded(t, "前の「" + t.title + "」を新しい内容に置き換えました。"); Mind.flash(t.id, "置き換えました"); return; }
         noteLanded(t, "「" + t.title + "」を " + ctxName(t.context) + " に入れました（" + (isQ ? "宙ぶらりん" : "メモ") + "）。");
         Mind.flash(t.id, ctxName(t.context) + " に入りました");
+        var cd = asDist(r.raw && r.raw.context), cp = cd && typeof cd[r.context] === "number" ? cd[r.context] : null;
+        if (ctxName(t.context) === "その他" || (cp !== null && cp < 0.3)) suggestBranch(t, text);
         if (isQ){ currentTab = "open"; syncTabs(); render(); }
       });
     }
@@ -3175,6 +3182,63 @@
     statusEl.appendChild(b);
   }
 
+
+  /* ============================ 新しい枝 ============================ */
+  var COMMON_BRANCHES = ["家族","子育て","ペット","推し活","旅行","買い物","料理","美容","ファッション","住まい","車","手続き","イベント",
+    "資格","転職","投資","税金","保険","医療","運動","読書","映画","音楽","ゲーム","TikTok","SNS","EC","配信","撮影","学校","友達","ライブ","予定","パスワード"];
+  var declinedBranch = {};
+  /* 枝を1つ足す。問題なければ空文字、あれば理由を返す（すでにある枝は "exists"） */
+  function addBranch(name, hint){
+    name = String(name || "").trim().slice(0, 12);
+    if (!name) return "名前を入れてください。";
+    if (name === "その他") return "「その他」は最初からあります。";
+    var list = branchList();
+    if (list.indexOf(name) >= 0) return "exists";
+    if (list.length >= MAX_BRANCHES) return "枝は" + MAX_BRANCHES + "個までです。使っていない枝を消してから作ってください。";
+    var hints = Object.assign({}, CONTEXT_HINTS);
+    if (hint && String(hint).trim()) hints[name] = String(hint).trim().slice(0, 80);
+    setBranches(list.concat([name]), hints);
+    return "";
+  }
+  /* 入力欄に「新しい枝 旅行」「カテゴリー追加 旅行：旅の予定や行きたい場所」と入れたら枝を作る */
+  var BRANCH_CMD = /^(?:新しい(?:枝|カテゴリー?)|(?:枝|カテゴリー?)を?(?:作る|作って|追加|ついか|増やす))\s*[:：]?\s*([^:：]{1,12}?)\s*(?:[:：]\s*(.{0,80}))?$/;
+  function branchCommand(text){
+    var m = String(text || "").trim().match(BRANCH_CMD); if (!m) return false;
+    var name = m[1].trim(), err = addBranch(name, m[2]);
+    input.value = ""; clearFusen(); syncClear();
+    if (err === "exists"){ note("「" + name + "」の枝はもうあります。"); return true; }
+    if (err){ note(err, "bad"); return true; }
+    note("枝「" + name + "」を作りました。" + (getCfg().key ? "今ある項目から当てはまるものを探しています…" : ""));
+    onBranchesAdded([name]);
+    return true;
+  }
+  /* 今の枝にうまく当てはまらなかったとき、入れた文の言葉とよくある枝の名前から、Jev に新しい枝の名前を選ばせて聞く */
+  async function suggestBranch(n, text){
+    if (!getCfg().key || branchList().length >= MAX_BRANCHES) return;
+    var have = {}; CONTEXTS.forEach(function(k){ have[normText(k)] = 1; });
+    var words = (String(text || "").match(WORD_RE) || []).filter(function(w){ return w.length >= 2 && w.length <= 10 && !/^ー+$/.test(w); });
+    var pool = words.concat(COMMON_BRANCHES).filter(function(w, i, a){ return a.indexOf(w) === i && !have[normText(w)] && !declinedBranch[w]; }).slice(0, 40);
+    if (!pool.length) return;
+    var crit = { "今の枝でよい": "今ある枝（" + branchList().join("・") + "）のどれかで十分" };
+    pool.forEach(function(w){ crit[w] = null; });
+    try {
+      var res = await jev({ 断片: text, 今ある枝: branchList() }, { newBranch: { type:"choice",
+        instructions:"この断片は今ある枝にうまく当てはまらなかった。これを入れる新しい枝（分類）の名前として一番よいものを選ぶ。1回きりの固有名詞より、これからも同じ種類のものが入りそうな名前を選ぶ。今ある枝で十分なら「今の枝でよい」。",
+        criteria: crit } });
+      var a = answersOf(res).newBranch, pick = asChoice(a), d = asDist(a);
+      if (!pick || pick === "今の枝でよい" || !crit.hasOwnProperty(pick)) return;
+      if (d && typeof d[pick] === "number" && d[pick] < 0.3) return;
+      showNotice("「" + n.title + "」は今の枝にうまく当てはまらなかったので「" + ctxName(n.context) + "」に入れました。新しい枝「" + pick + "」を作りますか？", [
+        { label:"「" + pick + "」を作って入れる", primary:true, run: function(){
+          var err = addBranch(pick); if (err && err !== "exists"){ note(err, "bad"); return; }
+          n.context = pick; put(n); Mind.flash(n.id, pick + " に入りました");
+          if (err !== "exists") onBranchesAdded([pick], n.id);
+        } },
+        { label:"名前を変えて作る", run: function(){ branchFormFor = pick; openSheet(n.id); } },
+        { label:"このままでいい", run: function(){ declinedBranch[pick] = 1; } }
+      ]);
+    } catch(e){}
+  }
   /* ============================ 枝の中身（上から出るパネル） ============================ */
   /* 枝をタップすると、その枝の項目を1枚ずつのカードにして上から出す。左右にスワイプして見ていく */
   var branchOpen = null, branchSheet = null;
