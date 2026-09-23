@@ -330,6 +330,7 @@
     background:var(--accent-soft); color:var(--accent); text-decoration:none; font-weight:500;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .link:active{opacity:.7}
+  .chip-x{cursor:pointer; font:inherit}
   .secret{border:1px dashed var(--line); border-radius:var(--radius); padding:12px 13px; margin-bottom:12px; background:var(--surface)}
   .secret .primary{margin-top:10px}
   .secret time{font-size:11px; color:var(--muted)}
@@ -1314,15 +1315,25 @@
     return r;
   }
 
+  /* 時刻表・営業時間のような「見返すための情報」。時刻がいくつも並ぶものも含む */
+  var REFERENCE_RE = /時刻表|ダイヤ|営業時間|受付時間|開館時間|開店時間|診療時間|料金表|メニュー|運行|発車|始発|終電/;
+  function isReference(n){
+    var t = dateText(n), times = (zen2han(t).match(/\d{1,2}\s*[:：]\s*\d{2}/g) || []).length;
+    return REFERENCE_RE.test(t) || times >= 3;
+  }
   /* これから先の日付・曜日・時刻・繰り返しが書いてあれば予定。書いた日より前の日付だけなら予定ではない */
   function looksScheduled(n){
     if (repeatOf(n)) return true;
     var du = computeDue(n);
     if (du && du.at >= startOfDay(n.createdAt || n.updatedAt || Date.now())) return true;
+    if (isReference(n)) return false;   /* 時刻表の時刻だけでは予定にしない */
     return !!parseClock(zen2han(nodeRepeatText(n))) && /時|:|：/.test(nodeRepeatText(n)) && !/時間|時代|時点|当時|時々|同時/.test(nodeRepeatText(n));
   }
   /* Jev が「事実メモ」と言っても、予定の形ならコードで「予定」にする */
-  function fixKind(n){ if ((n.kind === "事実メモ" || !n.kind) && looksScheduled(n)) n.kind = "予定"; }
+  function fixKind(n){
+    if ((n.kind === "事実メモ" || !n.kind) && looksScheduled(n)) n.kind = "予定";
+    else if (n.kind === "予定" && isReference(n) && !looksScheduled(n)) n.kind = "事実メモ";
+  }
 
   /* 「予定」「今週の予定」「明日の予定」と打ったら、これからの予定を近い順に出す */
   var SCHEDULE_Q = /^(今日|きょう|明日|あした|今週|来週|今月|来月|今後|これから|直近|近く)?の?(予定|よてい|スケジュール|すけじゅーる)(一覧|は|ある|とか|って)*[?？]?$/;
@@ -1362,6 +1373,7 @@
     var j = todayOf(n), rp = repeatOf(n), due = rp ? null : dueOf(n);
     if (!j && !due && !rp) return null;
     var t = j ? j.t : 0, r = j ? j.r : 0, tag = "", near = 0;
+    if (n.notToday || (!due && !rp && isReference(n))) t = Math.min(t, 0.1);
     /* 繰り返しの予定は、書いてある曜日・日付で決める（Jev が今日と言っても、その日でなければ今日にしない） */
     if (rp){
       var nx = rp.next, tm = rp.time ? " " + rp.time : "";
@@ -1446,7 +1458,7 @@
         if (rp) it.繰り返し = rp.label + (rp.next ? "（次は " + when(rp.next.at).split(" ")[0] + "）" : "");
         if (body && body !== n.title) it.抜粋 = body.slice(0, 80);
         qs["today" + k] = { type:"noul",
-          instructions:"項目 i" + k + "「" + n.title.slice(0, 40) + "」は、今日（" + todayLabel + "）に関係するか。今日やること・今日が期日・今日の予定・今日のうちに確認すべきことなら true。",
+          instructions:"項目 i" + k + "「" + n.title.slice(0, 40) + "」は、今日（" + todayLabel + "）に関係するか。今日やること・今日が期日・今日の予定・今日のうちに確認すべきことなら true。時刻表・営業時間・料金表のような、いつでも見返すための情報は false。",
           criteria:{ "true":"今日のうちに意識しておくべき", "false":"今日とは関係がない、または過ぎたこと" } };
         qs["risk" + k] = { type:"noul",
           instructions:"項目 i" + k + "「" + n.title.slice(0, 40) + "」は、忘れると困るものか（期限・手続き・更新・約束・支払い・予約など）。",
@@ -1692,10 +1704,19 @@
           extra.push("ほか " + ti.due.rest.slice(0, 4).map(function(x){ var d = new Date(x.at); return (d.getMonth() + 1) + "/" + d.getDate() + (x.label ? " " + x.label : ""); }).join("・") + (ti.due.rest.length > 4 ? " …" : ""));
       }
       /* 確率・重要度・鮮度は Jev と並び順の中で使うだけで、画面には出さない */
-      if (ti.t >= 0.6 && !(ti.due && ti.due.days !== 0)) extra.push("今日");
+      if (ti.t >= 0.6 && !ti.due) extra.push({ text:"今日 ✕", act: function(){
+        n.notToday = true; put(n); pinToday();
+        sheetNote = { id:n.id, text:"今日のことから外しました。日付を書き足せば、その日にまた出ます。" }; openSheet(n.id);
+      } });
     }
-    extra.concat([n.kind])
-      .forEach(function(t){ var c=document.createElement("span"); c.className="chip"; c.textContent=t; kv.appendChild(c); });
+    extra.concat([n.kind]).forEach(function(t){
+      if (!t) return;
+      if (typeof t === "object"){
+        var bt = document.createElement("button"); bt.type = "button"; bt.className = "chip chip-x"; bt.textContent = t.text;
+        bt.setAttribute("aria-label", "今日のことから外す"); bt.onclick = t.act; kv.appendChild(bt); return;
+      }
+      var c = document.createElement("span"); c.className = "chip"; c.textContent = t; kv.appendChild(c);
+    });
     sheetBody.appendChild(kv);
     if (rpt && rpt.next && rpt.next.days === 0){
       var dn = document.createElement("div"); dn.className = "sheet-actions"; dn.style.marginTop = "0";
@@ -3200,6 +3221,7 @@
       statusBefore: x.statusBefore === "note" || x.statusBefore === "open" ? x.statusBefore : undefined,
       repeat: validRepeat(x.repeat) || undefined,
       doneOn: typeof x.doneOn === "string" ? x.doneOn.slice(0, 12) : undefined,
+      notToday: x.notToday ? true : undefined,
       secret: x.secret && x.enc && typeof x.enc.ct === "string" ? true : undefined,
       enc: x.secret && x.enc && typeof x.enc.ct === "string"
         ? { v:1, k:String(x.enc.k || ""), epk:x.enc.epk, iv:String(x.enc.iv || ""), ct:x.enc.ct } : undefined
