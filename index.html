@@ -4472,6 +4472,15 @@
   /* ＋ → カテゴリー → 枝を選ぶと、入力欄の頭に色つきの札が付く。札の枝に、隣に書いた文を入れる。
      「＋ 新しい枝」を選ぶと札の中に名前を書ける（札だけで送れば枝を作るだけ） */
   var catTag = null;
+  /* 新しい枝に付く予定の色（loadContexts と同じ決め方：覚えている色が空いていればそれ、なければ空いている一番若い色） */
+  function colorForNew(name){
+    var map = getCfg().branchColors || {}, used = {};
+    branchList().forEach(function(k){ if (typeof map[k] === "number") used[map[k]] = 1; });
+    var ci = name && typeof map[name] === "number" && !used[map[name]] ? map[name] : 0;
+    if (!(name && typeof map[name] === "number" && !used[map[name]])) while (used[ci] && ci < 400) ci++;
+    if (name && branchList().indexOf(name) >= 0) return Mind.color(name);
+    return BRANCH_COLORS[ci % BRANCH_COLORS.length];
+  }
   function catTag0Msg(name){ return "枝「" + name + "」を作りました。" + (getCfg().key ? "今ある項目から合うものを探しています…" : ""); }
   function closePlus(){ $("plusMenu").hidden = true; $("plus").setAttribute("aria-expanded", "false"); }
   function openPlus(){
@@ -4498,7 +4507,7 @@
   function setCatTag(name, isNew){
     catTag = { name:name, isNew:isNew };
     var el = $("catTag");
-    el.style.setProperty("--c", isNew ? "var(--accent)" : Mind.color(name));
+    el.style.setProperty("--c", isNew ? colorForNew("") : Mind.color(name));
     $("catName").textContent = isNew ? "" : name;
     $("catNew").hidden = !isNew; $("catNew").value = "";
     el.hidden = false; closePlus(); el.parentNode.classList.add("tagged"); renderPred();
@@ -4517,6 +4526,7 @@
   $("pmCat").addEventListener("click", function(){ showCatChoices(); });
   $("predTag").onclick = function(){ openPlus(); showCatChoices(); };
   $("catX").addEventListener("click", function(){ clearCatTag(); input.focus(); });
+  $("catNew").addEventListener("input", function(){ $("catTag").style.setProperty("--c", colorForNew($("catNew").value.trim())); });
   $("catNew").addEventListener("keydown", function(e){
     if (e.key === "Enter" && !e.isComposing){ e.preventDefault(); input.focus(); }
   });
