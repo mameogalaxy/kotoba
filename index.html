@@ -274,6 +274,12 @@
   .label-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:20px 0 8px}
   .label-row .block-label{margin:0}
   .mat time{display:block; font-size:11px; color:var(--muted); margin-top:3px}
+  .links{display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 12px}
+  .node .links{grid-column:1 / -1; margin:6px 0 0}
+  .link{display:inline-flex; align-items:center; max-width:100%; padding:7px 12px; border-radius:99px; font-size:13px;
+    background:var(--accent-soft); color:var(--accent); text-decoration:none; font-weight:500;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .link:active{opacity:.7}
   .secret{border:1px dashed var(--line); border-radius:var(--radius); padding:12px 13px; margin-bottom:12px; background:var(--surface)}
   .secret .primary{margin-top:10px}
   .secret time{font-size:11px; color:var(--muted)}
@@ -1197,6 +1203,7 @@
       if (isStale(n)) bits.push("結論が古い");
       var mt = document.createElement("span"); mt.textContent = bits.join(" · ");
       sub.appendChild(mt); li.appendChild(sub);
+      var nl = nodeLinks(n); if (nl.length) li.appendChild(linkRow(nl.slice(0, 2)));
       listEl.appendChild(li);
     });
 
@@ -1231,6 +1238,8 @@
         (n.materials || []).forEach(function(m){ if (m.text === old) m.text = v; });
       });
     }, function(){ return n.title; });
+    var lk = nodeLinks(n);
+    if (lk.length) sheetBody.appendChild(linkRow(lk));
     if (sheetNote && sheetNote.id === n.id){
       var sn = document.createElement("p"); sn.id = "sheetNoteEl"; sn.className = "sheet-note" + (sheetNote.bad ? " bad" : "");
       if (sheetNote.busy){ var pl = document.createElement("span"); pl.className = "pulse"; sn.appendChild(pl); }
@@ -1462,7 +1471,46 @@
     }
   }
   function flushSheet(){ if (sheetDirty && openId && !editingInSheet()){ sheetDirty = false; openSheet(openId); } }
-  function titleOf(text){ text = String(text || "").trim(); return text.length > 30 ? text.slice(0, 30) + "…" : text; }
+  function titleOf(text){
+    text = String(text || "").trim().replace(/https?:\/\/(?:www\.)?/g, "");
+    return text.length > 30 ? text.slice(0, 30) + "…" : text;
+  }
+
+  /* ============================ リンク ============================ */
+  /* http(s) と www. で始まるものだけをリンクにする（javascript: などは開かない） */
+  var URL_RE = /(?:https?:\/\/|www\.)[^\s<>"'「」『』（）()【】、。，]+/gi;
+  function linksIn(text){
+    var out = [], seen = {};
+    (String(text || "").match(URL_RE) || []).forEach(function(u){
+      u = u.replace(/[.,!?:;。、…]+$/, "");
+      if (/^www\./i.test(u)) u = "https://" + u;
+      try { var x = new URL(u); if (!/^https?:$/.test(x.protocol) || seen[x.href]) return; seen[x.href] = 1; out.push(x); } catch(e){}
+    });
+    return out;
+  }
+  function nodeLinks(n){
+    if (n.secret) return [];
+    return linksIn([n.conclusion].concat((n.materials || []).map(function(m){ return m.text; })).concat([n.title]).join("\n"));
+  }
+  function linkLabel(x){
+    var host = x.hostname.replace(/^www\./, ""), path = (x.pathname + x.search).replace(/\/$/, "");
+    var name = { "apps.apple.com":"App Store", "youtube.com":"YouTube", "youtu.be":"YouTube", "tiktok.com":"TikTok",
+      "instagram.com":"Instagram", "x.com":"X", "twitter.com":"X", "amazon.co.jp":"Amazon", "maps.app.goo.gl":"Google マップ" }[host];
+    var s = (name ? name + "  " : host) + (name ? path : path).slice(0, name ? 28 : 34);
+    return s.length > 42 ? s.slice(0, 42) + "…" : s;
+  }
+  /* 押すと別のタブで開く。App Store のリンクは iPhone では App Store アプリが開く */
+  function linkRow(links){
+    var box = document.createElement("div"); box.className = "links";
+    links.forEach(function(x){
+      var a = document.createElement("a"); a.className = "link"; a.href = x.href;
+      a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.textContent = "🔗 " + linkLabel(x) + "  ↗";
+      a.addEventListener("click", function(e){ e.stopPropagation(); });
+      box.appendChild(a);
+    });
+    return box;
+  }
   function ctxName(c){ return CONTEXTS.indexOf(c) >= 0 ? c : "その他"; }
 
   /* 項目の中身だけを見て、枝・種類・重要度・鮮度・宙ぶらりんかを判定し直す */
@@ -1873,11 +1921,14 @@
   /* コードだけで「見られたくない値」を探す。見つかった部分を●にした見出しも返す */
   function detectSecret(text){
     text = String(text || "");
-    var ranges = [], keyword = false, m;
+    var ranges = [], keyword = false, m, urls = [];
+    URL_RE.lastIndex = 0;
+    while ((m = URL_RE.exec(text))) urls.push([m.index, m.index + m[0].length]);
+    var inUrl = function(i){ return urls.some(function(u){ return i >= u[0] && i < u[1]; }); };
     SECRET_WORD.lastIndex = 0;
     while ((m = SECRET_WORD.exec(text))){
       var s = m.index, e = s + m[0].length;
-      if (!wordAt(text, m, false)) continue;
+      if (!wordAt(text, m, false) || inUrl(s)) continue;
       keyword = true;
       var v = VALUE_AFTER.exec(text.slice(e));
       if (v){ var vs = e + v[0].length - v[1].length; ranges.push([vs, vs + v[1].length]); }
@@ -2306,6 +2357,7 @@
       foot.appendChild(hide);
       foot.appendChild(copyButton(function(){ return rv.text; }));
       box.appendChild(foot);
+      var rl = linksIn(rv.text); if (rl.length) box.appendChild(linkRow(rl));
     } else {
       var p = document.createElement("p"); p.className = "secret-mask";
       p.textContent = ((n.materials || [])[0] || {}).text || MASK;
@@ -2352,7 +2404,7 @@
   }
   function rawNode(text){
     var t = Date.now();
-    return { id:newId(), title:text.slice(0,28) + (text.length>28?"…":""),
+    return { id:newId(), title:titleOf(text),
       kind:"事実メモ", context:"その他", status:"note", importance:3, freshness:"数週間もつ",
       createdAt:t, updatedAt:t, materials:[{text:text, at:t}], conclusion:"", conclusionAt:0 };
   }
@@ -2435,7 +2487,7 @@
       var isQ = r.unresolved !== null && r.unresolved >= 0.5;
       var n = {
         id:newId(),
-        title: text.length > 30 ? text.slice(0,30) + "…" : text,
+        title: titleOf(text),
         kind: r.kind, context: r.context,
         status: isQ ? "open" : "note",
         importance: r.importance, freshness: r.freshness,
@@ -2998,7 +3050,7 @@
             var k = "i:" + n.id;
             var tg = todayTag(n);
             want[k] = { kind:"item", x: left ? x0 : x0 + colW - itemW, y:iy, w:itemW, h:itemH, c:color,
-                        text: n.title || "(無題)", id:n.id, status:n.status || "open", meta: tg, flag: !!tg,
+                        text: (nodeLinks(n).length ? "🔗 " : "") + (n.title || "(無題)"), id:n.id, status:n.status || "open", meta: tg, flag: !!tg,
                         op: dim !== null ? dim : (tg ? 1 : 0.5 + 0.5 * freshWeight(n)) };
             links.push({ from:prev, to:k, c:color, kind:"item" });
             prev = k;
@@ -3021,7 +3073,7 @@
         var n = find(id); if (!n) return;
         var color = colorOf(catOf(n)), k = "i:" + n.id;
         want[k] = { kind:"item", cand:true, x:(W - candW)/2, y:cy2, w:candW, h:candRow, c:color,
-                    text: (n.title || "(無題)") + (n.status === "done" && n.conclusion ? "  →  " + n.conclusion : ""),
+                    text: (nodeLinks(n).length ? "🔗 " : "") + (n.title || "(無題)") + (n.status === "done" && n.conclusion ? "  →  " + n.conclusion : ""),
                     id:n.id, status:n.status || "open", op:1, meta: metaById[n.id] || when(n.createdAt) };
         links.push({ from:"hub", to:k, c:color, kind:"cand" });
         cy2 += candRow + candGap;
