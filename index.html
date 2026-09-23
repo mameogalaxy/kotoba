@@ -4595,15 +4595,30 @@
       if (on){ try{ rec.stop(); }catch(e){} return; }
       try { rec = new SR(); } catch(e){ mic.hidden = true; return; }
       rec.lang = "ja-JP"; rec.interimResults = true; rec.continuous = false;
-      var base = input.value ? input.value + " " : "";
+      var base = input.value ? input.value.replace(/\s+$/, "") + (/\n$/.test(input.value) ? "" : " ") : "", got = false, err = "";
       rec.onresult = function(ev){
         var t = "";
         for (var i=0;i<ev.results.length;i++) t += ev.results[i][0].transcript;
-        input.value = base + t; renderFusen(); scheduleSemantic();
+        if (t) got = true;
+        input.value = base + t;
+        /* 打ったときと同じ扱いにする（×・分かれ目・入りそうな枝・候補） */
+        input.dispatchEvent(new Event("input"));
       };
-      rec.onstart = function(){ on = true; mic.setAttribute("aria-pressed","true"); mic.setAttribute("aria-label","音声入力を止める"); mic.innerHTML = MIC_STOP; };
-      rec.onend   = function(){ on = false; mic.setAttribute("aria-pressed","false"); mic.setAttribute("aria-label","音声で入力"); mic.innerHTML = MIC_ICON; };
-      rec.onerror = function(){ note("音声入力が使えませんでした。", "warn"); };
+      rec.onstart = function(){ on = true; err = ""; mic.setAttribute("aria-pressed","true"); mic.setAttribute("aria-label","音声入力を止める"); mic.innerHTML = MIC_STOP; note("聞いています…もう一度押すと止まります。"); };
+      rec.onend   = function(){
+        on = false; mic.setAttribute("aria-pressed","false"); mic.setAttribute("aria-label","音声で入力"); mic.innerHTML = MIC_ICON;
+        if (got){
+          /* 続けて書けるように、カーソルを最後に置く */
+          try { input.focus(); var L = input.value.length; input.setSelectionRange(L, L); } catch(e){}
+          note("入れました。直すときや改行するときは入力欄をタップ、よければ「入れる」。");
+        } else if (err === "not-allowed" || err === "service-not-allowed"){
+          note("マイクが許可されていません。iPhone の「設定 → アプリ → Safari → マイク」で許可してください。", "warn");
+        } else if (err && err !== "aborted"){
+          note(err === "no-speech" ? "声が聞き取れませんでした。もう一度マイクを押してください。" : "音声入力が使えませんでした。", "warn");
+        } else if (!got) statusEl.hidden = true;
+      };
+      /* 止めたときの「aborted」や、話し終わりの「no-speech」は、聞き取れていれば失敗扱いにしない */
+      rec.onerror = function(e){ err = (e && e.error) || "error"; };
       try { rec.start(); } catch(e){ note("音声入力を開始できませんでした。", "warn"); }
     });
   })();
