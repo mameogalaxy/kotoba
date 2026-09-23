@@ -1457,6 +1457,7 @@
   }
   function todayTag(n){ var i = todayInfo(n); return i ? i.tag : ""; }
   var todayState = null, todayDismissed = false, todayShownAt = 0, todayBusy = false;
+  var TODAY_MAX = 10;   /* 今日のことに並べる上限（多すぎると中心が埋まるので10件まで） */
 
   /* 1つの一覧に項目を並べ、項目ごとに2問（今日に関係するか・忘れると困るか）をまとめて聞く。
      まだ判定していない項目と、直した項目だけを聞く */
@@ -1508,12 +1509,21 @@
   function judgeTodaySoon(){ clearTimeout(todayTimer); todayTimer = setTimeout(judgeToday, 1500); }
 
   /* 開いた直後は、今日のことを中心に集めて見せる（打ち始めるか中心をタップすると通常表示） */
+  function clockMin(n, i){
+    var c = (i && i.rep && i.rep.time) || parseClock(zen2han(dateText(n)));
+    if (!c) return 24 * 60;
+    var p = c.split(":"); return +p[0] * 60 + +p[1];
+  }
   function pinToday(){
     function rankOf(i){ return i.t * 0.7 + i.r * 0.3 + i.near / 100; }
     var list = nodes.map(function(n){ return { n:n, i:todayInfo(n) }; })
       .filter(function(x){ var i = x.i; return i && (i.t >= 0.6 || i.r >= 0.85 || i.tag === "今日まで" || (i.tag === "明日" && i.r >= 0.5)); })
-      .sort(function(a, b){ return rankOf(b.i) - rankOf(a.i); })
-      .slice(0, 4);
+      /* 同じくらい今日のものは、時刻の早い順（時刻なしは後ろ） */
+      .sort(function(a, b){
+        var d = Math.round(rankOf(b.i) * 10) - Math.round(rankOf(a.i) * 10);
+        return d || clockMin(a.n, a.i) - clockMin(b.n, b.i);
+      })
+      .slice(0, TODAY_MAX);
     todayState = list.length ? { picked: list.map(function(x){
       var i = x.i, label;
       if (i.rep && i.tag) label = i.tag + " · " + i.rep.label.replace(/ \d{1,2}:\d{2}$/, "");
@@ -2255,8 +2265,8 @@
     var sq = scheduleQuery(text);
     if (sq){
       var up = upcomingItems(sq);
-      up.slice(0, 4).forEach(function(x){ seen[x.n.id] = 1; picked.push({ n:x.n, why:"", ts:0, tag:x.tag }); });
-      showPicked(picked, text, up.length ? sq.label + (up.length > 4 ? "（全" + up.length + "件）近い順" : " · 近い順") : sq.label + "は見つかりませんでした");
+      up.slice(0, 8).forEach(function(x){ seen[x.n.id] = 1; picked.push({ n:x.n, why:"", ts:0, tag:x.tag }); });
+      showPicked(picked, text, up.length ? sq.label + (up.length > 8 ? "（全" + up.length + "件）近い順" : " · 近い順") : sq.label + "は見つかりませんでした");
       return;
     }
     /* 「SNS」のように枝の名前そのものを打ったら、その枝の項目を先に並べる */
@@ -2319,7 +2329,7 @@
       head.appendChild(document.createTextNode("Jev に聞いています"));
     }
     fusenEl.appendChild(head);
-    picked.slice(0, 4).forEach(function(x){ fusenEl.appendChild(fusenRow(x.n, x.why, x.ts)); });
+    picked.slice(0, 10).forEach(function(x){ fusenEl.appendChild(fusenRow(x.n, x.why, x.ts)); });
   }
   function scheduleSemantic(){
     clearTimeout(semTimer);
@@ -4201,7 +4211,7 @@
         metaById = meta || {};
         if (!ready) return;
         renderHub();
-        var list = (ids || []).filter(function(id){ return !!find(id); }).slice(0, 4);
+        var list = (ids || []).filter(function(id){ return !!find(id); }).slice(0, 10);
         var key = list.join(",") + "|" + hubNote + "|" + hubCap;
         if (key === candKey) return;
         candKey = key;
