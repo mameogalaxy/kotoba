@@ -99,9 +99,8 @@
     color:transparent; pointer-events:none; overflow:hidden; border-radius:10px}
   .mirror .ml{display:block; min-height:1.5em; border-radius:6px}
   .mirror .cut{position:relative}
-  .mirror .cut::before{content:""; position:absolute; left:0; right:0; top:50%; border-top:2px dashed var(--accent)}
-  .mirror .cut::after{content:"✂ ここで分かれます"; position:absolute; right:2px; top:50%; transform:translateY(-50%); padding:0 6px;
-    background:var(--surface); color:var(--accent); font-size:11px; font-weight:700; line-height:1.4}
+  .mirror .cut::before{content:""; position:absolute; left:18px; right:0; top:50%; border-top:2px dashed var(--accent)}
+  .mirror .cut::after{content:"✂"; position:absolute; left:0; top:50%; transform:translateY(-52%); color:var(--accent); font-size:14px; line-height:1}
   .mirror .cuttop{box-shadow:inset 0 2px 0 var(--accent)}
   .splithint{margin:0 0 6px 6px; font-size:12px; font-weight:700; color:var(--accent)}
   #input{position:relative; z-index:1;}
@@ -112,11 +111,16 @@
   .composer .plus{flex:none; width:34px; height:34px; border-radius:50%; border:0; background:var(--surface2); color:var(--ink2);
     font-size:20px; line-height:1; padding:0; margin-bottom:2px}
   .composer .plus[aria-expanded="true"]{background:var(--accent); color:var(--on-accent)}
-  .cattag{flex:0 1 auto; display:inline-flex; align-items:center; gap:2px; max-width:34%; min-width:0; overflow:hidden; margin-bottom:3px; padding:5px 4px 5px 12px;
+  .cattag{flex:0 1 auto; display:inline-flex; align-items:center; gap:2px; max-width:100%; min-width:0; overflow:hidden; margin-bottom:3px; padding:5px 4px 5px 12px;
     border-radius:99px; background:var(--c, var(--accent)); color:#fff; font-size:14px; font-weight:700; white-space:nowrap}
   .cattag #catName:empty{display:none}
   .composer.tagged .mic{display:none}
-  .cattag input{flex:1 1 auto; width:4em; min-width:0; border:0; outline:none; background:transparent; color:#fff; font:inherit; font-size:16px; padding:0}
+  .composer{flex-wrap:wrap}
+  .composer .brk{display:none}
+  .composer.tagged .cattag{order:-2; max-width:100%; margin:2px 0 4px 4px}
+  .composer.tagged .brk{display:block; order:-1; flex-basis:100%; height:0}
+  .composer.tagged{border-radius:18px}
+  .cattag input{flex:1 1 auto; width:8em; min-width:0; border:0; outline:none; background:transparent; color:#fff; font:inherit; font-size:16px; padding:0}
   .cattag input::placeholder{color:rgba(255,255,255,.75)}
   .cattag button{flex:none; border:0; background:rgba(255,255,255,.25); color:#fff; width:22px; height:22px; border-radius:50%; font-size:14px; line-height:1; padding:0; margin-left:4px}
   .plusmenu{margin-bottom:8px; padding:8px; border:1px solid var(--line); border-radius:14px; background:var(--bg); box-shadow:var(--shadow)}
@@ -414,7 +418,7 @@
     <p class="splithint" id="splitHint" hidden></p>
     <div class="composer">
       <button class="plus" id="plus" type="button" aria-label="追加メニュー" aria-expanded="false">＋</button>
-      <span class="cattag" id="catTag" hidden><span id="catName"></span><input id="catNew" type="text" maxlength="12" placeholder="枝の名前" autocomplete="off"><button type="button" id="catX" aria-label="枝の指定をやめる">×</button></span>
+      <span class="cattag" id="catTag" hidden><span id="catName"></span><input id="catNew" type="text" maxlength="12" placeholder="枝の名前" autocomplete="off"><button type="button" id="catX" aria-label="枝の指定をやめる">×</button></span><span class="brk" aria-hidden="true"></span>
       <button class="mic" id="mic" type="button" hidden aria-pressed="false" aria-label="音声で入力"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
       <div class="inwrap"><div class="mirror" id="inputMirror" aria-hidden="true" hidden></div><textarea id="input" rows="1" placeholder="いま頭にあること" aria-label="放り込む内容"></textarea></div>
       <button class="clear" id="clearInput" type="button" hidden aria-label="入力を全部消す">×</button>
