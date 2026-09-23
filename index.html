@@ -388,7 +388,7 @@
         <textarea class="box" id="cfgContexts" rows="8" spellcheck="false"></textarea>
         <p class="hint">
           マップの色つきの枝になる分類です。Jev は入れたものを、この説明と見比べて1つ選びます。
-          1行に1つ、<code>名前：どんなものが入るか</code> の形で、11個まで。
+          1行に1つ、<code>名前：どんなものが入るか</code> の形で、30個まで。
           説明を具体的に書くほど、振り分けが正確になります。当てはまらないものは「その他」に入ります。
         </p>
         <div class="sheet-actions" style="margin-top:8px">
@@ -462,7 +462,9 @@
   };
   var CONTEXT_HINTS = Object.assign({}, DEFAULT_HINTS);
   var CONTEXTS = DEFAULT_CONTEXTS.concat(["その他"]);
-  var BRANCH_COLORS = ["#e8605c","#4aa8d4","#4fae80","#ee9150","#8a6ad0","#de6fa0","#c9a227","#4f9e9a","#7d8fd6","#c77a4f","#6aa84f"];
+  /* 枝の上限。Jev の Choice は選択肢を 255 個まで扱えるので、ここは見やすさで決めている */
+  var MAX_BRANCHES = 30;
+  var BRANCH_COLORS = ["#e8605c","#4aa8d4","#4fae80","#ee9150","#8a6ad0","#de6fa0","#c9a227","#4f9e9a","#7d8fd6","#c77a4f","#6aa84f","#b0568f","#3f86b8","#d17b2f","#5c9c6d","#9a7bc4","#c4616a","#3a9ea5","#a5883a","#6f7fc0"];
   var IMP_LEVELS   = ["どうでもいい","少し気になる","そこそこ大事","かなり大事","最優先"];
   var FRESH_LEVELS = ["数日で無価値になる","数週間もつ","数ヶ月もつ","年単位で有効"];
   var HALFLIFE = {
@@ -502,11 +504,11 @@
       seen[name] = 1; names.push(name);
       if (hint) hints[name] = hint;
     });
-    return { names: names.slice(0, 11), hints: hints };
+    return { names: names.slice(0, MAX_BRANCHES), hints: hints };
   }
   function loadContexts(){
     var c = getCfg();
-    var list = (Array.isArray(c.contexts) && c.contexts.length) ? c.contexts.slice(0, 11) : DEFAULT_CONTEXTS.slice();
+    var list = (Array.isArray(c.contexts) && c.contexts.length) ? c.contexts.slice(0, MAX_BRANCHES) : DEFAULT_CONTEXTS.slice();
     CONTEXTS = list.concat(["その他"]);
     CONTEXT_HINTS = (c.contextHints && typeof c.contextHints === "object") ? c.contextHints : Object.assign({}, DEFAULT_HINTS);
   }
@@ -1242,7 +1244,7 @@
       if (name === "その他"){ msg.textContent = "「その他」は最初からあります。"; return; }
       var c = getCfg(), list = CONTEXTS.filter(function(x){ return x !== "その他"; }), isNew = list.indexOf(name) < 0;
       if (list.indexOf(name) < 0){
-        if (list.length >= 11){ msg.textContent = "枝は11個までです。設定で使っていない枝を消してください。"; return; }
+        if (list.length >= MAX_BRANCHES){ msg.textContent = "枝は" + MAX_BRANCHES + "個までです。設定の「似た枝をさがす」でまとめるか、使っていない枝を消してください。"; return; }
         list.push(name);
       }
       var hints = Object.assign({}, CONTEXT_HINTS);
@@ -2047,7 +2049,7 @@
     }
     if (obj && Array.isArray(obj.contexts)){
       var c = getCfg(), cur = CONTEXTS.filter(function(x){ return x !== "その他"; }), hints = Object.assign({}, CONTEXT_HINTS);
-      obj.contexts.forEach(function(k){ k = String(k).slice(0, 12); if (k && k !== "その他" && cur.indexOf(k) < 0 && cur.length < 11) cur.push(k); });
+      obj.contexts.forEach(function(k){ k = String(k).slice(0, 12); if (k && k !== "その他" && cur.indexOf(k) < 0 && cur.length < MAX_BRANCHES) cur.push(k); });
       if (obj.contextHints && typeof obj.contextHints === "object")
         Object.keys(obj.contextHints).forEach(function(k){ if (!hints[k] && typeof obj.contextHints[k] === "string") hints[k] = obj.contextHints[k].slice(0, 80); });
       c.contexts = cur; c.contextHints = hints; setCfg(c); loadContexts();
@@ -2121,18 +2123,18 @@
     for (var i = 0; i < list.length; i++) for (var j = i + 1; j < list.length; j++)
       if (!focus || focus.indexOf(list[i]) >= 0 || focus.indexOf(list[j]) >= 0) pairs.push([list[i], list[j]]);
     if (!pairs.length) return [];
-    pairs = pairs.slice(0, 60);
-    var qs = {};
-    pairs.forEach(function(pr, k){
-      qs["pair" + k] = { type:"noul",
-        instructions:"「" + pr[0] + "」と「" + pr[1] + "」は、同じ種類のものを入れる分類として重なっているか（どちらか一方にまとめても困らないか）。",
-        criteria:{ "true":"ほぼ同じものが入る分類で、片方にまとめられる", "false":"入るものがはっきり違う" } };
-    });
-    var res = await jev({ 枝の一覧: list.map(function(k){ return { 名前:k, 説明: CONTEXT_HINTS[k] || "" }; }) }, qs);
-    var a = answersOf(res);
-    return pairs.map(function(pr, k){ return { a:pr[0], b:pr[1], p: asNoul(a["pair" + k]) }; })
-      .filter(function(x){ return x.p !== null && x.p >= 0.6; })
-      .sort(function(x, y){ return y.p - x.p; });
+    var state = { 枝の一覧: list.map(function(k){ return { 名前:k, 説明: CONTEXT_HINTS[k] || "" }; }) }, found = [];
+    for (var st = 0; st < pairs.length; st += 60){
+      var chunk = pairs.slice(st, st + 60), qs = {};
+      chunk.forEach(function(pr, k){
+        qs["pair" + k] = { type:"noul",
+          instructions:"「" + pr[0] + "」と「" + pr[1] + "」は、同じ種類のものを入れる分類として重なっているか（どちらか一方にまとめても困らないか）。",
+          criteria:{ "true":"ほぼ同じものが入る分類で、片方にまとめられる", "false":"入るものがはっきり違う" } };
+      });
+      var a = answersOf(await jev(state, qs));
+      chunk.forEach(function(pr, k){ var pv = asNoul(a["pair" + k]); if (pv !== null && pv >= 0.6) found.push({ a:pr[0], b:pr[1], p:pv }); });
+    }
+    return found.sort(function(x, y){ return y.p - x.p; });
   }
 
   function mergeBranch(from, to){
