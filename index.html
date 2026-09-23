@@ -4365,12 +4365,13 @@
     });
     for (var i = 0; i < pv.lines.length; i++){ if (si < pv.starts.length && pv.starts[si] === i){ k = si; si++; } part.push(k); }
     m.textContent = "";
+    var lastText = -1; pv.lines.forEach(function(l, i){ if (l.trim()) lastText = i; });
     pv.lines.forEach(function(line, i){
       var el = document.createElement("span"); el.className = "ml";
       el.textContent = line || "​";
       var blank = !line.trim(), nextPart = part[i + 1] !== undefined && part[i + 1] !== part[i];
       if (cutLine[i]) el.classList.add("cut");
-      else if (part[i] >= 0 && !(blank && (cutLine[i - 1] || nextPart))){
+      else if (part[i] >= 0 && !(blank && (cutLine[i - 1] || nextPart || i > lastText))){
         el.style.background = "color-mix(in srgb, " + PART_TINTS[part[i] % PART_TINTS.length] + " 16%, transparent)";
       }
       if (cutTop[i]) el.classList.add("cuttop");
@@ -4593,17 +4594,18 @@
     var MIC_ICON = mic.innerHTML, MIC_STOP = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>';
     mic.hidden = false;
     /* 音声のあと：ボタンを押すとそのタップでキーボードも出る */
+    /* 改行してすぐマイクをオンにする（押したタップのうちに始めるので、iPhone でも止められない） */
     function addBreak(two){
-      input.value = input.value.replace(/[ \t]+$/, "") + (two ? "\n\n" : "\n");
-      input.focus(); var L = input.value.length; try { input.setSelectionRange(L, L); } catch(e){}
+      input.value = input.value.replace(/\s+$/, "") + (two ? "\n\n" : "\n");
       input.dispatchEvent(new Event("input"));
+      statusEl.hidden = true;
+      mic.click();
     }
     function voiceNext(){
       statusEl.hidden = false; statusEl.className = "status"; statusEl.textContent = "";
-      statusEl.appendChild(document.createTextNode("入れました。続けるなら "));
-      [["改行", function(){ addBreak(false); statusEl.hidden = true; }],
-       ["空行（別の項目）", function(){ addBreak(true); statusEl.hidden = true; }],
-       ["🎤 続きを話す", function(){ addBreak(false); statusEl.hidden = true; mic.click(); }]].forEach(function(bt){
+      statusEl.appendChild(document.createTextNode("続けて話すなら 🎤 "));
+      [["改行", function(){ addBreak(false); }],
+       ["1行あけて改行", function(){ addBreak(true); }]].forEach(function(bt){
         var b = document.createElement("button"); b.type = "button"; b.className = "vbtn"; b.textContent = bt[0];
         b.onclick = bt[1]; statusEl.appendChild(b);
       });
