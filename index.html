@@ -4578,7 +4578,24 @@
       root.style.setProperty("--app-h", h + "px");
       root.style.setProperty("--app-y", y + "px");
       if (h !== lastH){ lastH = h; if (view === "map") Mind.refresh(); }
+      caretFix();
     }
+    /* iPhone では、キーボードで画面が動いたあとも、カーソルだけ前の位置に描かれてずれることがある。
+       動いたら、入力中の欄のカーソル位置を入れ直して描き直させる */
+    var caretT = null;
+    function caretFix(){
+      clearTimeout(caretT);
+      caretT = setTimeout(function(){
+        var el = document.activeElement;
+        if (!el || !/^(TEXTAREA|INPUT)$/.test(el.tagName) || el.type === "file") return;
+        try {
+          var a = el.selectionStart, b = el.selectionEnd;
+          el.style.transform = "translateZ(0)";
+          requestAnimationFrame(function(){ el.style.transform = ""; try { el.setSelectionRange(a, b); } catch(e){} });
+        } catch(e){}
+      }, 120);
+    }
+    document.addEventListener("focusin", function(){ setTimeout(caretFix, 350); });
     vv.addEventListener("resize", fit);
     vv.addEventListener("scroll", fit);
     fit();
