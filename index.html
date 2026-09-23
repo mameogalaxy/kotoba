@@ -715,7 +715,13 @@
       }),
       現在時刻: new Date().toISOString()
     };
-    var res = await jev(state, Object.assign(classifyQuestions(open), recallQuestions(), secretQuestion()));
+    var qs = Object.assign(classifyQuestions(open), recallQuestions(), secretQuestion());
+    if (splitBlocks(text).length > 1) qs.separate = {
+      type:"noul",
+      instructions:"この断片は空行で区切られたいくつかのまとまりでできている。それぞれのまとまりが、別々の用件・別々のサービス・別々の話として独立していて、1つずつ別の項目にした方がよいか。1つの話を段落に分けて書いているだけなら false。",
+      criteria:{ "true":"独立した別々の項目", "false":"1つの話" }
+    };
+    var res = await jev(state, qs);
     var a = answersOf(res);
 
     var impIdx   = asScore(a.importance, IMP_LEVELS);
@@ -736,6 +742,7 @@
       answerConf: asConf(a.isAnswer),
       recall:     readRecall(a, text),
       secret:     asNoul(a.secret),
+      separate:   asNoul(a.separate),
       usage:      res && res.usage
     };
   }
@@ -1841,6 +1848,17 @@
   var LOCK_KEY = "nou.lock.v1", UNLOCK_MS = 60000, REVEAL_MS = 30000;
   var MASK = "●●●●●●";
   var SECRET_WORD = /パスワード|ぱすわーど|パスコード|暗証番号|認証コード|確認コード|セキュリティコード|シークレット|秘密鍵|シードフレーズ|リカバリーコード|復元コード|バックアップコード|アクセストークン|トークン|api ?キー|api ?key|apikey|password|passwd|passcode|secret|token|private ?key|seed ?phrase|cvc|cvv|pin|pass|pw/gi;
+  /* ログインID・メールは、それだけなら隠さない。パスワードと一緒に書いてあるときは●にする */
+  var ID_WORD = /ログインID|ユーザーID|ユーザー名|会員ID|会員番号|お客様番号|アカウント名?|登録メール(?:アドレス)?|メールアドレス|メアド|login ?id|user ?id|username|e-?mail|mail|ID/gi;
+  var EMAIL = /[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9.\-]+)?/g;
+  /* 英字の言葉は、前後が英字なら別の単語の一部（passport・spin・gmail）なので数えない。
+     ID・mail は「IDsky1108」のように値がすぐ続くことがあるので、前だけを見る */
+  function wordAt(text, m, backOnly){
+    if (!/^[a-z]/i.test(m[0])) return true;
+    var s = m.index, e = s + m[0].length;
+    if (/[a-z0-9]/i.test(text.charAt(s - 1))) return false;
+    return backOnly || !/[a-z]/i.test(text.charAt(e));
+  }
   /* 言葉のすぐ後ろ（「：」「は」などを挟んでもよい）に続く英数字・記号を値とみなす */
   var VALUE_AFTER = /^\s*(?:[:：=＝]|は|→|->)?\s*「?([!-~！-～]{3,})/;
   var STRONG_RES = [
@@ -1859,8 +1877,7 @@
     SECRET_WORD.lastIndex = 0;
     while ((m = SECRET_WORD.exec(text))){
       var s = m.index, e = s + m[0].length;
-      /* passport・Pinterest・spin などは言葉の一部なので数えない */
-      if (/^[a-z]/i.test(m[0]) && (/[a-z0-9]/i.test(text.charAt(s - 1)) || /[a-z]/i.test(text.charAt(e)))) continue;
+      if (!wordAt(text, m, false)) continue;
       keyword = true;
       var v = VALUE_AFTER.exec(text.slice(e));
       if (v){ var vs = e + v[0].length - v[1].length; ranges.push([vs, vs + v[1].length]); }
@@ -1876,6 +1893,14 @@
       if (/[a-z]/.test(w) && /[A-Z]/.test(w) && /\d/.test(w)) ranges.push([m.index, m.index + w.length]);
     }
     if (!ranges.length) return { hit:false, keyword:keyword, label:text };
+    ID_WORD.lastIndex = 0;
+    while ((m = ID_WORD.exec(text))){
+      if (!wordAt(text, m, true)) continue;
+      var ie = m.index + m[0].length, iv = VALUE_AFTER.exec(text.slice(ie));
+      if (iv){ var ivs = ie + iv[0].length - iv[1].length; ranges.push([ivs, ivs + iv[1].length]); }
+    }
+    EMAIL.lastIndex = 0;
+    while ((m = EMAIL.exec(text))) ranges.push([m.index, m.index + m[0].length]);
     ranges.sort(function(a, b){ return a[0] - b[0]; });
     var out = "", pos = 0;
     ranges.forEach(function(r){
@@ -1883,7 +1908,7 @@
       out += text.slice(pos, Math.max(pos, r[0])) + MASK; pos = r[1];
     });
     out += text.slice(pos);
-    return { hit:true, keyword:keyword, label: out.replace(/\s+/g, " ").trim() };
+    return { hit:true, keyword:keyword, label: out.replace(/[ \t\u3000]+/g, " ").replace(/\s*\n\s*/g, "\n").trim() };
   }
   /* Jev に送ってよい形。値が見つかればそこを●にしたものを送る */
   function safeForJev(text){ var d = detectSecret(text); return d.hit ? d.label : text; }
@@ -2005,13 +2030,14 @@
   async function makeSecretNode(text, r){
     var enc = await sealText(text), t = Date.now(), label = secretLabel(text);
     return {
-      id:newId(), title: "🔒 " + titleOf(label),
+      id:newId(), title: secretTitle(label),
       kind: (r && r.kind) || "事実メモ", context: (r && r.context) || "その他", status:"note",
       importance: (r && r.importance) || 3, freshness: (r && r.freshness) || "数週間もつ",
       createdAt:t, updatedAt:t, materials:[{ text:label, at:t }], conclusion:"", conclusionAt:0,
       secret:true, enc:enc
     };
   }
+  function secretTitle(label){ return "🔒 " + titleOf(String(label).split("\n")[0]); }
   function nodeText(n){
     var mats = (n.materials || []).slice().sort(function(a, b){ return a.at - b.at; }).map(function(m){ return m.text; });
     var body = mats.length ? mats.join("\n\n") : (n.title || "");
@@ -2055,11 +2081,11 @@
     setupLock().then(done, fail);
   }
 
-  async function captureSecret(text, r){
+  async function captureSecret(text, r, quiet){
     input.value = ""; clearFusen(); syncClear();
     if (!currentLock()){
       askLock("パスワードなど、見られたくない内容がありそうです。",
-        function(){ captureSecret(text, r); },
+        function(){ captureSecret(text, r, quiet); },
         function(){ if (r){ saveClassified(text, r); send.disabled = false; } else captureText(text, true); },
         function(){ restoreInput(text); note("保存しませんでした。入力欄に戻しました。"); });
       send.disabled = false;
@@ -2067,16 +2093,116 @@
     }
     try {
       var n = await makeSecretNode(text, r);
-      put(n);
-      note("見られたくない内容っぽいので、隠して保存しました。見るときは項目をタップして Face ID。");
-      Mind.flash(n.id, "🔒 隠しました");
       /* コードで見つけたときは Jev に何も送っていないので、●にした見出しだけで枝を決める */
-      if (!r && getCfg().key) reclassifyNode(n).then(function(){ n.status = "note"; saveNodes(); render(); }).catch(function(){});
+      if (!r && getCfg().key){ try { await reclassifyNode(n); } catch(e){} n.status = "note"; }
+      await saveNew(n, function(t, how){
+        if (!quiet) note(how === "replaced" ? "前の「" + t.title + "」を新しい内容に置き換えました（隠したまま）。"
+          : "見られたくない内容っぽいので、隠して保存しました。見るときは項目をタップして Face ID。");
+        Mind.flash(t.id, how === "replaced" ? "🔒 置き換えました" : "🔒 隠しました");
+      });
     } catch(e){
       restoreInput(text);
       note("隠せませんでした：" + vaultMessage(e), "bad");
     }
     send.disabled = false;
+  }
+
+  /* ============================ まとめて入れたものを分ける ============================ */
+  function splitBlocks(text){ return String(text || "").split(/\n[ \t\u3000]*\n/).map(function(t){ return t.trim(); }).filter(Boolean); }
+  function credLine(line){
+    var m;
+    SECRET_WORD.lastIndex = 0; while ((m = SECRET_WORD.exec(line))) if (wordAt(line, m, false)) return true;
+    ID_WORD.lastIndex = 0;     while ((m = ID_WORD.exec(line)))     if (wordAt(line, m, true))  return true;
+    EMAIL.lastIndex = 0; return EMAIL.test(line);
+  }
+  /* 空行で分け、さらに「ID・パスワードの行のあとに、また見出しの行が来て、その下にまた ID・パスワード」なら
+     そこでも分ける。最後の「メモ：毎年更新」のように後ろに ID が続かない行は、前のものに付けたまま */
+  function splitEntries(text){
+    var out = [];
+    splitBlocks(text).forEach(function(b){
+      var lines = b.split(/\n/), cred = lines.map(credLine), cur = [];
+      lines.forEach(function(l, i){
+        if (!cred[i] && i > 0 && cred[i - 1] && cred.slice(i + 1).some(Boolean) && cur.length){ out.push(cur.join("\n")); cur = []; }
+        cur.push(l);
+      });
+      if (cur.length) out.push(cur.join("\n"));
+    });
+    return out;
+  }
+  async function captureMany(parts, original){
+    input.value = ""; clearFusen(); syncClear();
+    var needLock = parts.some(function(t){ return detectSecret(t).hit; });
+    if (needLock && !currentLock()){
+      askLock("パスワードなど、見られたくない内容がありそうです。",
+        function(){ captureMany(parts, original); },
+        async function(){ for (var i = 0; i < parts.length; i++) await captureText(parts[i], true); },
+        function(){ restoreInput(original); note("保存しませんでした。入力欄に戻しました。"); });
+      send.disabled = false;
+      return;
+    }
+    send.disabled = true;
+    var hid = 0;
+    for (var i = 0; i < parts.length; i++){
+      thinking(parts.length + "件に分けて仕分けています…（" + (i + 1) + "/" + parts.length + "）");
+      if (detectSecret(parts[i]).hit){ await captureSecret(parts[i], null, true); hid++; }
+      else await captureText(parts[i], false);
+    }
+    note(parts.length + "件に分けて入れました" + (hid ? "（うち " + hid + "件は隠しました）" : "") + "。" + (noticeOpen ? "似たものがあったので、上で確認してください。" : ""));
+    send.disabled = false;
+  }
+
+  /* ============================ 重複の確認 ============================ */
+  /* 比べるのは見出しの部分。「ログインID」「パスワード」のような言葉はどの項目にもあるので外す */
+  function dupText(n){
+    var t = n.secret ? (((n.materials || [])[0] || {}).text || n.title)
+      : [n.title].concat((n.materials || []).map(function(m){ return m.text; })).join(" ");
+    return String(t).replace(SECRET_WORD, " ").replace(ID_WORD, " ").replace(/隠したメモ|🔒/g, " ");
+  }
+  function dupShow(n){ return n.secret ? (((n.materials || [])[0] || {}).text || n.title) : nodeText(n).slice(0, 300); }
+  /* コードで似ているものを3つまで絞り、Jev に「同じものをもう一度書いたのか」を聞く */
+  async function findDuplicate(n){
+    var mine = dupText(n);
+    if (normText(mine).length < 3) return null;
+    var a = bigrams(mine);
+    var cands = nodes.filter(function(x){ return x.id !== n.id; }).map(function(x){
+      var t = dupText(x);
+      return { n:x, s: normText(t).length < 3 ? 0 : dice(a, bigrams(t)) };
+    }).filter(function(c){ return c.s >= 0.35; }).sort(function(x, y){ return y.s - x.s; }).slice(0, 3);
+    if (!cands.length) return null;
+    var sure = cands[0].s >= 0.9 ? cands[0].n : null;
+    if (!getCfg().key) return sure;
+    var qs = {};
+    cands.forEach(function(c, i){
+      qs["dup" + i] = { type:"noul",
+        instructions:"新しい項目は、既存の項目 e" + i + " と同じもの（同じサービスのログイン情報・同じ用件・同じ予定など）を、もう一度書いたものか。名前が似ているだけの別のもの（別のサイト・別の店・別の日・別の用件）なら false。",
+        criteria:{ "true":"同じものの重複", "false":"別のもの" } };
+    });
+    try {
+      var ans = answersOf(await jev({
+        新しい項目: dupShow(n),
+        既存の項目: cands.map(function(c, i){ return { 番号:"e" + i, 内容: dupShow(c.n), 書いた日: when(c.n.createdAt || c.n.updatedAt) }; })
+      }, qs));
+      var best = null, bp = 0;
+      cands.forEach(function(c, i){ var p = asNoul(ans["dup" + i]); if (p !== null && p > bp){ bp = p; best = c.n; } });
+      return bp >= 0.6 ? best : null;
+    } catch(e){ return sure; }
+  }
+  function replaceWith(old, n){
+    old.title = n.title; old.materials = n.materials; old.kind = n.kind;
+    if (n.secret){ old.secret = true; old.enc = n.enc; } else { delete old.secret; delete old.enc; }
+    delete revealed[old.id];
+    put(old);
+  }
+  /* 新しい項目を入れる前に、同じものがないか確かめる。あれば上に知らせて選んでもらう */
+  async function saveNew(n, done){
+    var dup = null;
+    try { dup = await findDuplicate(n); } catch(e){}
+    if (!dup){ put(n); if (done) done(n, "added"); return; }
+    showNotice("似た内容がすでにあります：「" + dup.title + "」（" + when(dup.createdAt || dup.updatedAt) + " に登録）。重複して登録しますか？", [
+      { label:"登録しない（前のを残す）", primary:true, run: function(){ note("登録しませんでした。前の「" + dup.title + "」をそのまま残しています。"); Mind.flash(dup.id, "前からあります"); } },
+      { label:"前のを新しい内容に置き換える", run: function(){ replaceWith(dup, n); if (done) done(dup, "replaced"); } },
+      { label:"別に登録する", run: function(){ put(n); if (done) done(n, "added"); } }
+    ]);
   }
 
   /* 表示中の中身。30秒で消える。アプリを離れたらすぐ消す */
@@ -2114,7 +2240,7 @@
   async function resealNode(n, text){
     try {
       var enc = await sealText(text), label = secretLabel(text), rv = revealed[n.id];
-      n.enc = enc; n.title = "🔒 " + titleOf(label);
+      n.enc = enc; n.title = secretTitle(label);
       n.materials = [{ text:label, at: ((n.materials || [])[0] || {}).at || Date.now() }];
       if (rv){ rv.text = text; rv.until = Date.now() + REVEAL_MS; }
       put(n);
@@ -2137,7 +2263,7 @@
     try {
       var enc = await sealText(text), label = secretLabel(text);
       var first = (n.materials || []).reduce(function(t, m){ return Math.min(t, m.at || t); }, n.createdAt || Date.now());
-      n.enc = enc; n.secret = true; n.title = "🔒 " + titleOf(label);
+      n.enc = enc; n.secret = true; n.title = secretTitle(label);
       n.materials = [{ text:label, at:first }]; n.conclusion = ""; n.conclusionAt = 0; n.status = "note";
       put(n);
       sheetNote = { id:n.id, text: auto ? "見られたくない文字があったので、隠して保存しました。" : "隠しました。見るときは Face ID。" };
@@ -2239,11 +2365,16 @@
   async function captureText(text, openly){
     send.disabled = true; $("neuronBox").textContent = "";
 
-    /* パスワードなどがコードで見つかったら、Jev には送らずにその場で隠す */
-    if (!openly && detectSecret(text).hit){ await captureSecret(text, null); return; }
+    /* パスワードなどがコードで見つかったら、Jev には送らずにその場で隠す。
+       いくつかまとめて貼られていたら、1つずつ別の項目にする */
+    if (!openly && detectSecret(text).hit){
+      var parts = splitEntries(text);
+      if (parts.length > 1){ await captureMany(parts, text); return; }
+      await captureSecret(text, null); return;
+    }
 
     if (!getCfg().key){
-      put(rawNode(text)); input.value = ""; clearFusen();
+      saveNew(rawNode(text)); input.value = ""; clearFusen();
       noteWithSettings("APIキーが未設定なので、メモとして入れました。");
       send.disabled = false; return;
     }
@@ -2252,12 +2383,15 @@
     var r;
     try { r = await classify(text); }
     catch(e){
-      put(rawNode(text)); input.value = ""; clearFusen();
+      saveNew(rawNode(text)); input.value = ""; clearFusen();
       noteWithSettings((e.code === "cors" ? "ブラウザから直接叩けませんでした。" : (e.message || "仕分けに失敗しました。")) + " メモとして入れました。");
       send.disabled = false; refreshRaw(); return;
     }
     refreshRaw();
 
+    /* 空行で区切って別々のことを書いていたら、分けて入れ直す */
+    var blocks = splitBlocks(text);
+    if (blocks.length > 1 && r.separate !== null && r.separate >= 0.6){ await captureMany(blocks, text); return; }
     if (!openly && r.secret !== null && r.secret >= 0.7){ await captureSecret(text, r); return; }
 
     var rec = r.recall;
@@ -2308,10 +2442,12 @@
         createdAt:t, updatedAt:t,
         materials:[{ text:text, at:t }], conclusion:"", conclusionAt:0
       };
-      put(n);
-      note((isQ ? "宙ぶらりんに積みました。" : "メモに入れました。") + pct("未解決", r.unresolved));
-      Mind.flash(n.id, (CONTEXTS.indexOf(n.context) >= 0 ? n.context : "その他") + " に入りました");
-      if (isQ){ currentTab = "open"; syncTabs(); render(); }
+      saveNew(n, function(t, how){
+        if (how === "replaced"){ note("前の「" + t.title + "」を新しい内容に置き換えました。"); Mind.flash(t.id, "置き換えました"); return; }
+        note((isQ ? "宙ぶらりんに積みました。" : "メモに入れました。") + pct("未解決", r.unresolved));
+        Mind.flash(t.id, (CONTEXTS.indexOf(t.context) >= 0 ? t.context : "その他") + " に入りました");
+        if (isQ){ currentTab = "open"; syncTabs(); render(); }
+      });
     }
 
     if (answerTo && answerTo.status === "open") showNeuron(answerTo, r.isAnswer, text);
