@@ -165,6 +165,7 @@
   .mm-item.done .mm-t::before{content:"✓ "}
   .mm .mm-meta{flex:none; max-width:none; margin-right:8px; font-size:10.5px; font-weight:500; opacity:.8}
   .mm .mm-t{flex:1}
+  .mm-item.flag .mm-meta{background:var(--c); color:#fff; opacity:1; font-weight:700; font-size:10px; padding:2px 7px; border-radius:99px; margin-right:6px}
   .ctx-btn{cursor:pointer; border-color:var(--accent); color:var(--accent)}
   .ctx-picker{display:flex; flex-wrap:wrap; gap:6px; margin:-8px 0 16px; padding:10px; border:1px dashed var(--line); border-radius:12px}
   .ctx-picker .chip{cursor:pointer}
@@ -905,7 +906,87 @@
     var hl = HALFLIFE[n.freshness] || 21;
     return Math.pow(0.5, ageDays(n.updatedAt || n.createdAt) / hl);
   }
-  function nowScore(n){ return Math.round(((Number(n.importance)||3)/5) * freshWeight(n) * 100); }
+  function baseScore(n){ return Math.round(((Number(n.importance)||3)/5) * freshWeight(n) * 100); }
+  /* Jev が「今日に関係する」「忘れると困る」と判定した分だけ、中心へ引き寄せる */
+  function todayBoost(n){
+    if (n.status === "done") return 0;
+    var j = todayOf(n); if (!j) return 0;
+    return Math.round(55 * (j.t || 0) + 35 * (j.r || 0));
+  }
+  function nowScore(n){ return Math.min(100, baseScore(n) + todayBoost(n)); }
+
+  /* ============================ 今日のこと ============================ */
+  var TODAY_KEY = "nou.today.v1", todayCache = { date:"", items:{} };
+  try { todayCache = JSON.parse(localStorage.getItem(TODAY_KEY) || "null") || todayCache; } catch(e){}
+  if (!todayCache.items) todayCache.items = {};
+  function saveToday(){ try { localStorage.setItem(TODAY_KEY, JSON.stringify(todayCache)); } catch(e){} }
+  function dayKey(){ var d = new Date(); return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate(); }
+  function todayOf(n){
+    if (todayCache.date !== dayKey()) return null;
+    var c = todayCache.items[n.id];
+    return (c && c.u === (n.updatedAt || 0)) ? c : null;
+  }
+  function todayTag(n){
+    var j = todayOf(n); if (!j || n.status === "done") return "";
+    if (j.t >= 0.6) return "今日";
+    if (j.r >= 0.75) return "忘れずに";
+    return "";
+  }
+  var todayState = null, todayDismissed = false, todayShownAt = 0, todayBusy = false;
+
+  /* 1つの一覧に項目を並べ、項目ごとに2問（今日に関係するか・忘れると困るか）をまとめて聞く。
+     まだ判定していない項目と、直した項目だけを聞く */
+  async function judgeToday(){
+    if (todayBusy || !getCfg().key) return;
+    var dk = dayKey();
+    if (todayCache.date !== dk) todayCache = { date:dk, items:{} };
+    var need = nodes.filter(function(n){ return n.status !== "done" && !todayOf(n); })
+      .sort(function(a, b){ return baseScore(b) - baseScore(a); }).slice(0, 120);
+    if (!need.length){ pinToday(); return; }
+    todayBusy = true;
+    var d = new Date(), todayLabel = (d.getMonth()+1) + "月" + d.getDate() + "日（" + DOW[d.getDay()] + "）";
+    for (var i = 0; i < need.length; i += 30){
+      var chunk = need.slice(i, i + 30), qs = {};
+      var items = chunk.map(function(n, k){
+        var body = (n.materials || []).map(function(m){ return m.text; }).join(" ").replace(/\s+/g, " ");
+        var it = { 番号:"i" + k, 見出し:n.title, 書いた日: when(n.createdAt || n.updatedAt, true) };
+        if (body && body !== n.title) it.抜粋 = body.slice(0, 80);
+        qs["today" + k] = { type:"noul",
+          instructions:"項目 i" + k + "「" + n.title.slice(0, 40) + "」は、今日（" + todayLabel + "）に関係するか。今日やること・今日が期日・今日の予定・今日のうちに確認すべきことなら true。",
+          criteria:{ "true":"今日のうちに意識しておくべき", "false":"今日とは関係がない、または過ぎたこと" } };
+        qs["risk" + k] = { type:"noul",
+          instructions:"項目 i" + k + "「" + n.title.slice(0, 40) + "」は、忘れると困るものか（期限・手続き・更新・約束・支払い・予約など）。",
+          criteria:{ "true":"忘れると損をする・迷惑がかかる", "false":"忘れても特に困らない" } };
+        return it;
+      });
+      try {
+        var res = await jev({
+          今日: todayLabel + " " + todOf(d.getHours()),
+          読み方: "項目の中の「今日」「明日」「来週」「◯日まで」などは、その項目を書いた日を基準に読む。",
+          項目: items
+        }, qs);
+        var a = answersOf(res);
+        chunk.forEach(function(n, k){
+          var t = asNoul(a["today" + k]), r = asNoul(a["risk" + k]);
+          if (t !== null || r !== null) todayCache.items[n.id] = { u: n.updatedAt || 0, t: t || 0, r: r || 0 };
+        });
+      } catch(e){ if (e.code === "cors" || e.code === "no_key") break; }
+    }
+    todayBusy = false;
+    saveToday(); render(); pinToday();
+  }
+  var todayTimer = null;
+  function judgeTodaySoon(){ clearTimeout(todayTimer); todayTimer = setTimeout(judgeToday, 1500); }
+
+  /* 開いた直後は、今日のことを中心に集めて見せる（打ち始めるか中心をタップすると通常表示） */
+  function pinToday(){
+    var list = nodes.map(function(n){ return { n:n, j:todayOf(n) }; })
+      .filter(function(x){ return x.j && x.n.status !== "done" && (x.j.t >= 0.6 || x.j.r >= 0.85); })
+      .sort(function(a, b){ return (b.j.t * 0.7 + b.j.r * 0.3) - (a.j.t * 0.7 + a.j.r * 0.3); })
+      .slice(0, 4);
+    todayState = list.length ? { picked: list.map(function(x){ return { n:x.n, why:"", ts:0, tag: (x.j.t >= 0.6 ? "今日 " + Math.round(x.j.t * 100) + "%" : "忘れずに " + Math.round(x.j.r * 100) + "%") }; }) } : null;
+    if (!todayDismissed && !input.value.trim() && !recallState) renderFusen();
+  }
   function isStale(n){
     if (n.status !== "done" || !n.conclusionAt) return false;
     return ageDays(n.conclusionAt) > (HALFLIFE[n.freshness] || 21) * 4;
@@ -1090,7 +1171,12 @@
       if (isNew) onBranchesAdded([name], n.id);
     };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
-    [n.kind, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")]
+    var tj = todayOf(n), extra = [];
+    if (tj && n.status !== "done"){
+      if (tj.t >= 0.3) extra.push("今日 " + Math.round(tj.t * 100) + "%");
+      if (tj.r >= 0.5) extra.push("忘れると困る " + Math.round(tj.r * 100) + "%");
+    }
+    extra.concat([n.kind, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")])
       .forEach(function(t){ var c=document.createElement("span"); c.className="chip"; c.textContent=t; kv.appendChild(c); });
     sheetBody.appendChild(kv);
     sheetBody.appendChild(picker);
@@ -1297,6 +1383,7 @@
     if (n.status !== before.status) bits.push(label[before.status] + " → " + label[n.status]);
     sheetNote = { id:n.id, text: bits.length ? bits.join("。") + "。" : "振り分けは変わりませんでした（" + now + "）。" };
     if (now !== before.ctx) pendingFlash = { id:n.id, label: now + " に移りました" };
+    judgeTodaySoon();
     refreshSheet(n);
   }
 
@@ -1397,6 +1484,12 @@
     if (text.length < 2){
       lastLocalTop = 0;
       if (!text && recallState){ showPicked(recallState.picked, recallState.text, recallState.note); return; }
+      if (!text && todayState && !todayDismissed){
+        var d0 = new Date();
+        showPicked(todayState.picked, (d0.getMonth()+1) + "/" + d0.getDate() + "（" + DOW[d0.getDay()] + "）", "忘れずに", "今日のこと");
+        todayShownAt = Date.now();
+        return;
+      }
       Mind.highlight([], text, false); return;
     }
     var picked = [], seen = {}, note = "";
@@ -1425,10 +1518,10 @@
     showPicked(picked, text, note);
   }
 
-  function showPicked(picked, text, note){
+  function showPicked(picked, text, note, cap){
     var meta = {};
-    picked.forEach(function(x){ meta[x.n.id] = when(x.ts || x.n.createdAt); });
-    Mind.highlight(picked.map(function(x){ return x.n.id; }), text, !!semInFlight, note, meta);
+    picked.forEach(function(x){ meta[x.n.id] = x.tag || when(x.ts || x.n.createdAt); });
+    Mind.highlight(picked.map(function(x){ return x.n.id; }), text, !!semInFlight, note, meta, cap);
     if (view === "map" || !picked.length) return;
 
     var head = document.createElement("div"); head.className = "fusen-head";
@@ -1724,6 +1817,7 @@
     }
 
     if (answerTo && answerTo.status === "open") showNeuron(answerTo, r.isAnswer, text);
+    judgeTodaySoon();
   }
   function pct(label, p){
     return (typeof p === "number") ? "（" + label + " " + Math.round(p*100) + "%）" : "";
@@ -2103,15 +2197,15 @@
 
     var wrap, stage, wires, hubEl, blobs = {};
     var els = {}, links = [], expanded = {};
-    var sig = "", cands = [], candKey = "", typed = "", busy = false, hubNote = "", metaById = {};
+    var sig = "", cands = [], candKey = "", typed = "", busy = false, hubNote = "", hubCap = "", metaById = {};
     var ready = false, laidOut = false, timer = null, rafId = null, wireUntil = 0;
     var hub = { x:0, y:0, d:0, top:0 }, lastH = 0;
 
-    function score(n){ return n.status === "open" ? nowScore(n) : Math.round(nowScore(n) * 0.55); }
+    function score(n){ return Math.min(100, (n.status === "open" ? baseScore(n) : Math.round(baseScore(n) * 0.55)) + todayBoost(n)); }
     function catOf(n){ return CONTEXTS.indexOf(n.context) >= 0 ? n.context : "その他"; }
     function signature(){
       return CONTEXTS.join(",") + "#" + nodes.map(function(n){
-        return n.id + ":" + (n.updatedAt||0) + ":" + n.status + ":" + n.context + ":" + (n.title||"");
+        return n.id + ":" + (n.updatedAt||0) + ":" + n.status + ":" + n.context + ":" + (n.title||"") + ":" + todayTag(n) + ":" + todayBoost(n);
       }).join("|");
     }
 
@@ -2135,7 +2229,8 @@
 
     function renderHub(){
       var open = nodes.filter(function(n){ return n.status === "open"; }).length;
-      var key = typed + "|" + cands.length + "|" + busy + "|" + hubNote + "|" + nodes.length + "|" + open;
+      var nToday = nodes.filter(function(n){ return todayTag(n) === "今日"; }).length;
+      var key = typed + "|" + cands.length + "|" + busy + "|" + hubNote + "|" + hubCap + "|" + nodes.length + "|" + open + "|" + nToday;
       if (hubEl._key === key) return;
       hubEl._key = key;
       hubEl.textContent = "";
@@ -2147,7 +2242,7 @@
       svg.appendChild(path); hubEl.appendChild(svg);
 
       var cap = document.createElement("div"); cap.className = "hub-cap";
-      cap.textContent = hubNote ? "探しているもの" : typed ? "いま考えていること" : "頭の中";
+      cap.textContent = hubCap || (hubNote ? "探しているもの" : typed ? "いま考えていること" : "頭の中");
       hubEl.appendChild(cap);
 
       var inn = document.createElement("div"); inn.className = "hub-in";
@@ -2164,7 +2259,7 @@
         var s2 = document.createElement("div"); s2.className = "hub-sub";
         var dt = new Date();
         s2.textContent = nodes.length
-          ? "宙ぶらりん " + open + "件 · " + (dt.getMonth()+1) + "/" + dt.getDate()
+          ? (nToday ? "今日のこと " + nToday + "件 · " : "宙ぶらりん " + open + "件 · ") + (dt.getMonth()+1) + "/" + dt.getDate()
           : "放り込むと、ここから枝が伸びます";
         inn.appendChild(s2);
       }
@@ -2174,7 +2269,7 @@
     function cls(s){
       if (s.kind === "cat") return "mm mm-cat";
       if (s.kind === "more") return "mm mm-more";
-      return "mm mm-item" + (s.status === "done" ? " done" : s.status === "note" ? " note" : "") + (s.cand ? " cand" : "");
+      return "mm mm-item" + (s.status === "done" ? " done" : s.status === "note" ? " note" : "") + (s.cand ? " cand" : "") + (s.flag && !s.cand ? " flag" : "");
     }
 
     function layout(animate){
@@ -2253,9 +2348,10 @@
           v.list.forEach(function(n){
             var iy = top ? cur - itemH : cur;
             var k = "i:" + n.id;
+            var tg = todayTag(n);
             want[k] = { kind:"item", x: left ? x0 : x0 + colW - itemW, y:iy, w:itemW, h:itemH, c:color,
-                        text: n.title || "(無題)", id:n.id, status:n.status || "open",
-                        op: dim !== null ? dim : 0.5 + 0.5 * freshWeight(n) };
+                        text: n.title || "(無題)", id:n.id, status:n.status || "open", meta: tg, flag: !!tg,
+                        op: dim !== null ? dim : (tg ? 1 : 0.5 + 0.5 * freshWeight(n)) };
             links.push({ from:prev, to:k, c:color, kind:"item" });
             prev = k;
             cur = top ? iy - rowGap : iy + itemH + rowGap;
@@ -2423,6 +2519,7 @@
         }
         if (e.target.closest(".hub")){
           if (recallState){ recallState = null; renderFusen(); }
+          else if (todayState && !todayDismissed){ todayDismissed = true; renderFusen(); }
           input.focus();
         }
       });
@@ -2469,15 +2566,16 @@
         if (!force && ns === sig) return;
         sig = ns; layout(laidOut);
       },
-      highlight: function(ids, text, isBusy, note, meta){
+      highlight: function(ids, text, isBusy, note, meta, cap){
         typed = String(text || "").trim();
         busy = !!isBusy;
         hubNote = note || "";
+        hubCap = cap || "";
         metaById = meta || {};
         if (!ready) return;
         renderHub();
         var list = (ids || []).filter(function(id){ return !!find(id); }).slice(0, 4);
-        var key = list.join(",") + "|" + hubNote;
+        var key = list.join(",") + "|" + hubNote + "|" + hubCap;
         if (key === candKey) return;
         candKey = key;
         clearTimeout(timer);
@@ -2530,6 +2628,7 @@
   })();
   input.addEventListener("input", function(){
     if (recallState && input.value.trim()) recallState = null;
+    if (input.value.trim()) todayDismissed = true;
     renderWordbar(); scheduleWordJev();
     renderFusen(); scheduleSemantic();
   });
@@ -2626,6 +2725,15 @@
   render();
   setView("map");
   setTimeout(remindBackup, 1500);
+  setTimeout(judgeToday, 600);
+  document.addEventListener("visibilitychange", function(){
+    if (document.hidden) return;
+    /* 日付が変わったか、しばらく離れていたら、もう一度「今日のこと」から見せる */
+    if (todayCache.date !== dayKey() || Date.now() - todayShownAt > 60 * 60 * 1000){
+      if (!input.value.trim()) todayDismissed = false;
+      judgeToday();
+    }
+  });
   if (!getCfg().key) setTimeout(openCfg, 350);
 })();
 </script>
