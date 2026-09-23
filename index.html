@@ -477,7 +477,7 @@
   "use strict";
 
   /* ============================ 定数 ============================ */
-  var KINDS     = ["疑問","調べかけ","アイデア","タスク","事実メモ","買いたい"];
+  var KINDS     = ["疑問","調べかけ","アイデア","タスク","予定","事実メモ","買いたい"];
   var DEFAULT_CONTEXTS = ["仕事","副業","お金","健康","人間関係","趣味","学び","生活"];
   /* Jev には名前だけでなく「何が入る枝か」を渡す。名前だけだと判断材料がない */
   var DEFAULT_HINTS = {
@@ -563,6 +563,7 @@
         var m0 = (n.materials || []).slice().sort(function(a, b){ return a.at - b.at; })[0];
         n.title = titleOf(m0 && linksIn(m0.text).length ? m0.text : n.title);
       }
+      if (!n.secret) fixKind(n);
       if (RENAMED[n.context] && CONTEXTS.indexOf(n.context) < 0 && CONTEXTS.indexOf(RENAMED[n.context]) >= 0)
         n.context = RENAMED[n.context];
     });
@@ -1184,6 +1185,47 @@
     return r;
   }
 
+  /* これから先の日付・曜日・時刻・繰り返しが書いてあれば予定。書いた日より前の日付だけなら予定ではない */
+  function looksScheduled(n){
+    if (repeatOf(n)) return true;
+    var du = computeDue(n);
+    if (du && du.at >= startOfDay(n.createdAt || n.updatedAt || Date.now())) return true;
+    return !!parseClock(zen2han(nodeRepeatText(n))) && /時|:|：/.test(nodeRepeatText(n)) && !/時間|時代|時点|当時|時々|同時/.test(nodeRepeatText(n));
+  }
+  /* Jev が「事実メモ」と言っても、予定の形ならコードで「予定」にする */
+  function fixKind(n){ if ((n.kind === "事実メモ" || !n.kind) && looksScheduled(n)) n.kind = "予定"; }
+
+  /* 「予定」「今週の予定」「明日の予定」と打ったら、これからの予定を近い順に出す */
+  var SCHEDULE_Q = /^(今日|きょう|明日|あした|今週|来週|今月|来月|今後|これから|直近|近く)?の?(予定|よてい|スケジュール|すけじゅーる)(一覧|は|ある|とか|って)*[?？]?$/;
+  function scheduleQuery(text){
+    var m = String(text || "").replace(/\s+/g, "").match(SCHEDULE_Q); if (!m) return null;
+    var w = m[1] || "", today = startOfDay(Date.now()), d = new Date(today), dow = (d.getDay() + 6) % 7, from = 0, to = 400;
+    if (/今日|きょう/.test(w)) to = 0;
+    else if (/明日|あした/.test(w)){ from = 1; to = 1; }
+    else if (w === "今週") to = 6 - dow;
+    else if (w === "来週"){ from = 7 - dow; to = 13 - dow; }
+    else if (w === "今月"){ to = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - d.getDate(); }
+    else if (w === "来月"){
+      var s0 = new Date(d.getFullYear(), d.getMonth() + 1, 1), e0 = new Date(d.getFullYear(), d.getMonth() + 2, 0);
+      from = Math.round((s0 - today) / DAY); to = Math.round((e0 - today) / DAY);
+    }
+    return { label: (w ? w.replace("きょう", "今日").replace("あした", "明日") + "の" : "これからの") + "予定", from:from, to:to };
+  }
+  function upcomingItems(q){
+    var out = [];
+    nodes.forEach(function(n){
+      if (n.status === "done") return;
+      var rp = repeatOf(n), at = null, days = null;
+      if (rp && rp.next){ at = rp.next.at; days = rp.next.days; }
+      else { var du = dueOf(n); if (du && du.days >= 0){ at = du.at; days = du.days; } }
+      if (days === null || days < q.from || days > q.to) return;
+      var tm = rp && rp.time ? " " + rp.time : "";
+      var tag = (days === 0 ? "今日" : days === 1 ? "明日" : when(at).split(" ")[0]) + tm + (rp ? " 🔁" : "");
+      out.push({ n:n, days:days, tag:tag });
+    });
+    return out.sort(function(a, b){ return a.days - b.days || nowScore(b.n) - nowScore(a.n); });
+  }
+
   /* Jev の判定（今日に関係するか・忘れると困るか）と、書いてある期日を合わせる */
   function todayInfo(n){
     if (n.status === "done") return null;
@@ -1770,6 +1812,7 @@
     var kind = asChoice(a.kind), ctx = asChoice(a.context), un = asNoul(a.unresolved);
     var imp = asScore(a.importance, IMP_LEVELS), fr = asScore(a.freshness, FRESH_LEVELS);
     if (kind && KINDS.indexOf(kind) >= 0) n.kind = kind;
+    fixKind(n);
     if (ctx && CONTEXTS.indexOf(ctx) >= 0) n.context = ctx;
     if (imp !== null) n.importance = Math.min(5, Math.max(1, Math.round(imp) + 1));
     if (fr !== null) n.freshness = FRESH_LEVELS[Math.min(FRESH_LEVELS.length - 1, Math.max(0, Math.round(fr)))];
@@ -1913,6 +1956,13 @@
     var picked = [], seen = {}, note = "";
     function add(n, why, ts){ if (n && !seen[n.id]){ seen[n.id] = 1; picked.push({ n:n, why:why, ts:ts || 0 }); } }
 
+    var sq = scheduleQuery(text);
+    if (sq){
+      var up = upcomingItems(sq);
+      up.slice(0, 4).forEach(function(x){ seen[x.n.id] = 1; picked.push({ n:x.n, why:"", ts:0, tag:x.tag }); });
+      showPicked(picked, text, up.length ? sq.label + (up.length > 4 ? "（全" + up.length + "件）近い順" : " · 近い順") : sq.label + "は見つかりませんでした");
+      return;
+    }
     /* 「SNS」のように枝の名前そのものを打ったら、その枝の項目を先に並べる */
     var br = branchHit(text);
     if (br && br.exact){
@@ -1978,7 +2028,7 @@
   function scheduleSemantic(){
     clearTimeout(semTimer);
     var text = input.value.trim();
-    if (!getCfg().key || text.length < 2 || nodes.length === 0) return;
+    if (!getCfg().key || text.length < 2 || nodes.length === 0 || scheduleQuery(text)) return;
     /* Jev は 70〜500ms・0.0001円なので、止まってすぐ投げてよい */
     semTimer = setTimeout(function(){
       if (semanticFor === text || semInFlight) return;
@@ -2713,9 +2763,10 @@
   }
   function rawNode(text){
     var t = Date.now();
-    return { id:newId(), title:titleOf(text),
+    var n = { id:newId(), title:titleOf(text),
       kind:"事実メモ", context:"その他", status:"note", importance:3, freshness:"数週間もつ",
       createdAt:t, updatedAt:t, materials:[{text:text, at:t}], conclusion:"", conclusionAt:0 };
+    fixKind(n); return n;
   }
 
   async function capture(){
@@ -2804,6 +2855,7 @@
         materials:[{ text:text, at:t }], conclusion:"", conclusionAt:0
       };
       if (r.repeat) n.repeat = r.repeat;
+      fixKind(n);
       saveNew(n, function(t, how){
         if (how === "replaced"){ noteLanded(t, "前の「" + t.title + "」を新しい内容に置き換えました。"); Mind.flash(t.id, "置き換えました"); return; }
         noteLanded(t, "「" + t.title + "」を " + ctxName(t.context) + " に入れました（" + (isQ ? "宙ぶらりん" : "メモ") + "）。");
