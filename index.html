@@ -770,7 +770,7 @@
       入力中の断片: text,
       過去の項目: cand.map(function(n){
         var body = (n.materials || []).map(function(m){ return m.text; }).join(" ").replace(/\s+/g, " ");
-        var item = { id:n.id, 見出し:n.title, 状態:n.status };
+        var item = { id:n.id, 見出し:n.title, 状態:n.status, 枝: ctxName(n.context) };
         if (n.conclusion) item.結論 = n.conclusion;
         if (body && body.indexOf(n.title.replace(/…$/, "")) !== 0 || body.length > n.title.length + 4) item.抜粋 = body.slice(0, 60);
         return item;
@@ -778,7 +778,7 @@
     }, Object.assign({
       thinkingOf: {
         type:"choice",
-        instructions:"入力中の人がいま頭に浮かべている可能性が最も高い項目を選ぶ。文字が一致していなくても、同じことを考えているなら選ぶ。",
+        instructions:"入力中の人がいま頭に浮かべている可能性が最も高い項目を選ぶ。文字が一致していなくても、同じことを考えているなら選ぶ。入力が枝（分類）の名前なら、その枝の項目を選ぶ。",
         criteria: choices
       }
     }, recallQuestions()));
@@ -1791,9 +1791,9 @@
     return (2*hit)/(a.size+b.size);
   }
   function idx(n){
-    var key = n.id + "|" + (n.updatedAt||0) + "|" + ((n.materials||[]).length) + "|" + (n.conclusion||"").length;
+    var key = n.id + "|" + (n.updatedAt||0) + "|" + ((n.materials||[]).length) + "|" + (n.conclusion||"").length + "|" + ctxName(n.context);
     if (n._bgKey !== key || !(n._bg instanceof Set) || typeof n._ft !== "string"){
-      var all = [n.title, n.conclusion].concat((n.materials||[]).map(function(m){ return m.text; })).filter(Boolean).join(" ");
+      var all = [n.title, n.conclusion].concat((n.materials||[]).map(function(m){ return m.text; })).concat([ctxName(n.context)]).filter(Boolean).join(" ");
       n._bg = bigrams(all);
       n._ft = normText(all);
       n._bgKey = key;
@@ -1873,8 +1873,14 @@
     var picked = [], seen = {}, note = "";
     function add(n, why, ts){ if (n && !seen[n.id]){ seen[n.id] = 1; picked.push({ n:n, why:why, ts:ts || 0 }); } }
 
+    /* 「SNS」のように枝の名前そのものを打ったら、その枝の項目を先に並べる */
+    var br = branchHit(text);
+    if (br && br.exact){
+      note = br.name + " の枝";
+      branchItems(br.name).forEach(function(n){ add(n, note, 0); });
+    }
     if (semanticFor === text){
-      note = semanticNote;
+      if (semanticNote) note = semanticNote;
       semantic.forEach(function(id){ add(find(id), note || "Jev が意味で拾いました", semanticTs[id]); });
     }
     if (!note && !picked.length){
@@ -1893,9 +1899,26 @@
         if (top) localMatches(top.word).forEach(function(r){ if (picked.length < 3) add(r.n, top.word + " として", 0); });
       }
     }
+    /* 「SNS投稿」のように枝の名前を含むときは、空いた分をその枝の項目で埋める */
+    if (br && !br.exact) branchItems(br.name).forEach(function(n){ if (picked.length < 4) add(n, br.name + " の枝", 0); });
     showPicked(picked, text, note);
   }
 
+  /* 打った言葉が枝の名前か。exact: 名前そのもの（打ちかけも含む）／でなければ名前を含む文 */
+  function branchHit(text){
+    var q = normText(text); if (q.length < 2) return null;
+    var best = null;
+    CONTEXTS.forEach(function(k){
+      var c = normText(k); if (c.length < 2 && q !== c) return;
+      if (q === c || (c.indexOf(q) === 0 && q.length >= 2)){ if (!best || !best.exact) best = { name:k, exact:true }; }
+      else if (c.length >= 2 && q.indexOf(c) >= 0 && !best) best = { name:k, exact:false };
+    });
+    return best && branchItems(best.name).length ? best : null;
+  }
+  function branchItems(name){
+    return nodes.filter(function(n){ return ctxName(n.context) === name && n.status !== "done"; })
+      .sort(function(a, b){ return nowScore(b) - nowScore(a); }).slice(0, 4);
+  }
   function showPicked(picked, text, note, cap){
     var meta = {};
     picked.forEach(function(x){ meta[x.n.id] = x.tag || when(x.ts || x.n.createdAt); });
