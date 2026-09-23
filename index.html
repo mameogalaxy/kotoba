@@ -98,6 +98,22 @@
     color:var(--ink); line-height:1.5; min-height:0; max-height:140px; overflow-y:auto; outline:none; padding:7px 4px}
   #input::placeholder{color:var(--muted)}
   .composer .primary{padding:8px 16px; flex:none}
+  .composer .plus{flex:none; width:34px; height:34px; border-radius:50%; border:0; background:var(--surface2); color:var(--ink2);
+    font-size:20px; line-height:1; padding:0; margin-bottom:2px}
+  .composer .plus[aria-expanded="true"]{background:var(--accent); color:var(--on-accent)}
+  .cattag{flex:0 1 auto; display:inline-flex; align-items:center; gap:2px; max-width:34%; min-width:0; overflow:hidden; margin-bottom:3px; padding:5px 4px 5px 12px;
+    border-radius:99px; background:var(--c, var(--accent)); color:#fff; font-size:14px; font-weight:700; white-space:nowrap}
+  .cattag #catName:empty{display:none}
+  .composer.tagged .mic{display:none}
+  .cattag input{flex:1 1 auto; width:4em; min-width:0; border:0; outline:none; background:transparent; color:#fff; font:inherit; font-size:16px; padding:0}
+  .cattag input::placeholder{color:rgba(255,255,255,.75)}
+  .cattag button{flex:none; border:0; background:rgba(255,255,255,.25); color:#fff; width:22px; height:22px; border-radius:50%; font-size:14px; line-height:1; padding:0; margin-left:4px}
+  .plusmenu{margin-bottom:8px; padding:8px; border:1px solid var(--line); border-radius:14px; background:var(--bg); box-shadow:var(--shadow)}
+  .pm-item{display:block; width:100%; text-align:left; border:0; background:transparent; font:inherit; font-size:14.5px; color:var(--ink); padding:10px 8px; border-radius:10px}
+  .pm-item:hover{background:var(--surface2)}
+  .pm-cats{display:flex; flex-wrap:wrap; gap:8px; max-height:40vh; overflow-y:auto}
+  .pm-cats button{border:0; border-radius:99px; padding:8px 14px; font:inherit; font-size:14px; font-weight:700; color:#fff; background:var(--c)}
+  .pm-cats .pm-new{background:transparent; color:var(--accent); border:1.5px dashed var(--accent)}
   .composer .mic{flex:none; border-color:transparent; padding:7px 10px}
   .composer .clear{flex:none; width:30px; height:30px; margin-bottom:4px; border:0; border-radius:50%;
     background:var(--surface2); color:var(--muted); font-size:17px; line-height:1; padding:0}
@@ -374,7 +390,15 @@
     <div id="fusen"></div>
     <p class="status" id="status" hidden></p>
     <div class="wordbar" id="wordbar" hidden aria-label="入力の候補"></div>
+    <div class="plusmenu" id="plusMenu" hidden>
+      <div class="pm-list" id="pmList">
+        <button type="button" class="pm-item" id="pmCat">🏷 カテゴリーを指定して入れる</button>
+      </div>
+      <div class="pm-cats" id="pmCats" hidden></div>
+    </div>
     <div class="composer">
+      <button class="plus" id="plus" type="button" aria-label="追加メニュー" aria-expanded="false">＋</button>
+      <span class="cattag" id="catTag" hidden><span id="catName"></span><input id="catNew" type="text" maxlength="12" placeholder="枝の名前" autocomplete="off"><button type="button" id="catX" aria-label="枝の指定をやめる">×</button></span>
       <button class="ghost mic" id="mic" type="button" hidden aria-pressed="false">音声</button>
       <textarea id="input" rows="1" placeholder="いま頭にあること" aria-label="放り込む内容"></textarea>
       <button class="clear" id="clearInput" type="button" hidden aria-label="入力を全部消す">×</button>
@@ -2586,12 +2610,12 @@
     setupLock().then(done, fail);
   }
 
-  async function captureSecret(text, r, quiet){
+  async function captureSecret(text, r, quiet, ctx){
     input.value = ""; clearFusen(); syncClear();
     if (!currentLock()){
       askLock("パスワードなど、見られたくない内容がありそうです。",
-        function(){ captureSecret(text, r, quiet); },
-        function(){ if (r){ saveClassified(text, r); send.disabled = false; } else captureText(text, true); },
+        function(){ captureSecret(text, r, quiet, ctx); },
+        function(){ if (r){ saveClassified(text, r); send.disabled = false; } else captureText(text, true, ctx); },
         function(){ restoreInput(text); note("保存しませんでした。入力欄に戻しました。"); });
       send.disabled = false;
       return;
@@ -2600,6 +2624,7 @@
       var n = await makeSecretNode(text, r);
       /* コードで見つけたときは Jev に何も送っていないので、●にした見出しだけで枝を決める */
       if (!r && getCfg().key){ try { await reclassifyNode(n); } catch(e){} n.status = "note"; }
+      if (ctx) n.context = ctx;
       await saveNew(n, function(t, how){
         if (!quiet) noteLanded(t, how === "replaced" ? "前の「" + t.title + "」を新しい内容に置き換えました（隠したまま）。"
           : "見られたくない内容っぽいので、隠して " + ctxName(t.context) + " に入れました。見るときは Face ID。");
@@ -2642,13 +2667,13 @@
       return acc;
     }, []);
   }
-  async function captureMany(parts, original){
+  async function captureMany(parts, original, ctx){
     input.value = ""; clearFusen(); syncClear();
     var needLock = parts.some(function(t){ return detectSecret(t).hit; });
     if (needLock && !currentLock()){
       askLock("パスワードなど、見られたくない内容がありそうです。",
-        function(){ captureMany(parts, original); },
-        async function(){ for (var i = 0; i < parts.length; i++) await captureText(parts[i], true); },
+        function(){ captureMany(parts, original, ctx); },
+        async function(){ for (var i = 0; i < parts.length; i++) await captureText(parts[i], true, ctx); },
         function(){ restoreInput(original); note("保存しませんでした。入力欄に戻しました。"); });
       send.disabled = false;
       return;
@@ -2657,8 +2682,8 @@
     var hid = 0;
     for (var i = 0; i < parts.length; i++){
       thinking(parts.length + "件に分けて仕分けています…（" + (i + 1) + "/" + parts.length + "）");
-      if (detectSecret(parts[i]).hit){ await captureSecret(parts[i], null, true); hid++; }
-      else await captureText(parts[i], false);
+      if (detectSecret(parts[i]).hit){ await captureSecret(parts[i], null, true, ctx); hid++; }
+      else await captureText(parts[i], false, ctx);
     }
     note(parts.length + "件に分けて入れました" + (hid ? "（うち " + hid + "件は隠しました）" : "") + "。" + (noticeOpen ? "似たものがあったので、上で確認してください。" : ""));
     send.disabled = false;
@@ -2890,24 +2915,40 @@
   }
 
   async function capture(){
-    var text = input.value.trim(); if (!text) return;
+    var text = input.value.trim();
+    if (catTag){
+      var name = catTag.isNew ? $("catNew").value.trim() : catTag.name;
+      if (!name){ $("catNew").focus(); return; }
+      if (catTag.isNew){
+        var err = addBranch(name);
+        if (err && err !== "exists"){ note(err, "bad"); return; }
+        if (!err) onBranchesAdded([name]);
+      }
+      clearCatTag();
+      if (!text){ note(catTag0Msg(name)); return; }
+      captureText(text, false, name);
+      return;
+    }
+    if (!text) return;
     if (branchCommand(text)) return;
     captureText(text, false);
   }
   /* openly: 「隠さずに保存」を選んだあと。見られたくない内容かどうかはもう聞かない */
-  async function captureText(text, openly){
+  /* ctx: ＋ から枝を選んで入れたとき、その枝に入れる（Jev の枝えらびより優先） */
+  async function captureText(text, openly, ctx){
     send.disabled = true; $("neuronBox").textContent = "";
 
     /* パスワードなどがコードで見つかったら、Jev には送らずにその場で隠す。
        いくつかまとめて貼られていたら、1つずつ別の項目にする */
     if (!openly && detectSecret(text).hit){
       var parts = splitEntries(text);
-      if (parts.length > 1){ await captureMany(parts, text); return; }
-      await captureSecret(text, null); return;
+      if (parts.length > 1){ await captureMany(parts, text, ctx); return; }
+      await captureSecret(text, null, false, ctx); return;
     }
 
     if (!getCfg().key){
-      saveNew(rawNode(text)); input.value = ""; clearFusen();
+      var raw0 = rawNode(text); if (ctx) raw0.context = ctx;
+      saveNew(raw0); input.value = ""; clearFusen();
       noteWithSettings("APIキーが未設定なので、メモとして入れました。");
       send.disabled = false; return;
     }
@@ -2916,19 +2957,21 @@
     var r;
     try { r = await classify(text); }
     catch(e){
-      saveNew(rawNode(text)); input.value = ""; clearFusen();
+      var raw1 = rawNode(text); if (ctx) raw1.context = ctx;
+      saveNew(raw1); input.value = ""; clearFusen();
       noteWithSettings((e.code === "cors" ? "ブラウザから直接叩けませんでした。" : (e.message || "仕分けに失敗しました。")) + " メモとして入れました。");
       send.disabled = false; refreshRaw(); return;
     }
     refreshRaw();
+    if (ctx){ r.context = ctx; r.forceCtx = ctx; }
 
     /* 空行で区切って別々のことを書いていたら、分けて入れ直す */
     var blocks = splitBlocks(text);
-    if (blocks.length > 1 && r.separate !== null && r.separate >= 0.6){ await captureMany(blocks, text); return; }
-    if (!openly && r.secret !== null && r.secret >= 0.7){ await captureSecret(text, r); return; }
+    if (blocks.length > 1 && r.separate !== null && r.separate >= 0.6){ await captureMany(blocks, text, ctx); return; }
+    if (!openly && r.secret !== null && r.secret >= 0.7){ await captureSecret(text, r, false, ctx); return; }
 
     var rec = r.recall;
-    if (rec && rec.isRecall !== null && rec.isRecall >= 0.6){
+    if (!ctx && rec && rec.isRecall !== null && rec.isRecall >= 0.6){
       var win = windowOf(rec) || windowOf(parseTimeLocal(text)), picked = [];
       if (win) recallPick(text, win, null).forEach(function(x){ var n = find(x.id); if (n) picked.push({ n:n, why:win.label, ts:x.ts }); });
       else localMatches(text).slice(0, 3).forEach(function(x){ picked.push({ n:x.n, why:"", ts:0 }); });
@@ -2984,7 +3027,7 @@
         noteLanded(t, "「" + t.title + "」を " + ctxName(t.context) + " に入れました（" + (isQ ? "宙ぶらりん" : "メモ") + "）。");
         Mind.flash(t.id, ctxName(t.context) + " に入りました");
         var cd = asDist(r.raw && r.raw.context), cp = cd && typeof cd[r.context] === "number" ? cd[r.context] : null;
-        if (ctxName(t.context) === "その他" || (cp !== null && cp < 0.3)) suggestBranch(t, text);
+        if (!r.forceCtx && (ctxName(t.context) === "その他" || (cp !== null && cp < 0.3))) suggestBranch(t, text);
         if (isQ){ currentTab = "open"; syncTabs(); render(); }
       });
     }
@@ -4044,8 +4087,57 @@
     wxBusy = false; renderDay();
   }
 
+
+  /* ============================ ＋ メニュー（枝を指定して入れる） ============================ */
+  /* ＋ → カテゴリー → 枝を選ぶと、入力欄の頭に色つきの札が付く。札の枝に、隣に書いた文を入れる。
+     「＋ 新しい枝」を選ぶと札の中に名前を書ける（札だけで送れば枝を作るだけ） */
+  var catTag = null;
+  function catTag0Msg(name){ return "枝「" + name + "」を作りました。" + (getCfg().key ? "今ある項目から合うものを探しています…" : ""); }
+  function closePlus(){ $("plusMenu").hidden = true; $("plus").setAttribute("aria-expanded", "false"); }
+  function openPlus(){
+    $("pmList").hidden = false; $("pmCats").hidden = true;
+    $("plusMenu").hidden = false; $("plus").setAttribute("aria-expanded", "true");
+  }
+  function showCatChoices(){
+    var box = $("pmCats"); box.textContent = "";
+    CONTEXTS.forEach(function(k){
+      var b = document.createElement("button"); b.type = "button"; b.textContent = k;
+      b.style.setProperty("--c", Mind.color(k));
+      b.onclick = function(){ setCatTag(k, false); };
+      box.appendChild(b);
+    });
+    var nb = document.createElement("button"); nb.type = "button"; nb.className = "pm-new"; nb.textContent = "＋ 新しい枝";
+    nb.onclick = function(){ setCatTag("", true); };
+    box.appendChild(nb);
+    $("pmList").hidden = true; box.hidden = false;
+  }
+  function setCatTag(name, isNew){
+    catTag = { name:name, isNew:isNew };
+    var el = $("catTag");
+    el.style.setProperty("--c", isNew ? "var(--accent)" : Mind.color(name));
+    $("catName").textContent = isNew ? "" : name;
+    $("catNew").hidden = !isNew; $("catNew").value = "";
+    el.hidden = false; closePlus(); el.parentNode.classList.add("tagged");
+    input.placeholder = isNew ? "入れる内容（なくても枝だけ作れます）" : name + " に入れること";
+    setTimeout(function(){ (isNew ? $("catNew") : input).focus(); }, 30);
+  }
+  function clearCatTag(){
+    catTag = null; $("catTag").hidden = true; $("catNew").value = ""; $("catTag").parentNode.classList.remove("tagged");
+    input.placeholder = "いま頭にあること";
+  }
+
   /* ============================ イベント ============================ */
   send.addEventListener("click", capture);
+  $("plus").addEventListener("click", function(){ if ($("plusMenu").hidden) openPlus(); else closePlus(); });
+  $("pmCat").addEventListener("click", showCatChoices);
+  $("catX").addEventListener("click", function(){ clearCatTag(); input.focus(); });
+  $("catNew").addEventListener("keydown", function(e){
+    if (e.key === "Enter" && !e.isComposing){ e.preventDefault(); input.focus(); }
+  });
+  /* 入力欄が空のまま⌫を押したら札を外す */
+  input.addEventListener("keydown", function(e){
+    if (e.key === "Backspace" && !input.value && catTag && !e.isComposing){ clearCatTag(); }
+  });
   $("wx").addEventListener("click", function(){ loadWeather(true); });
   function growInput(){
     input.style.height = "auto";
