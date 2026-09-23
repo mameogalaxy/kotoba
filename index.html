@@ -102,7 +102,7 @@
   .mirror .cut::before{content:""; position:absolute; left:18px; right:0; top:50%; border-top:2px dashed var(--accent)}
   .mirror .cut::after{content:"✂"; position:absolute; left:0; top:50%; transform:translateY(-52%); color:var(--accent); font-size:14px; line-height:1}
   .mirror .cuttop{box-shadow:inset 0 2px 0 var(--accent)}
-  .predrow{margin:0 0 6px 4px}
+  .predrow{margin:0 0 6px 4px; display:flex; flex-wrap:wrap; gap:6px}
   .predtag{border:1.5px solid var(--c, var(--line)); color:var(--c, var(--muted)); background:color-mix(in srgb, var(--c, transparent) 12%, transparent);
     border-radius:99px; padding:4px 11px; font:inherit; font-size:12.5px; font-weight:700}
   .status .vbtn{margin:4px 6px 0 0; border:1px solid var(--line); background:var(--bg); color:var(--ink2); border-radius:99px; padding:5px 12px; font:inherit; font-size:12.5px; text-decoration:none}
@@ -2483,6 +2483,7 @@
   }
 
   function renderWordbar(){
+    if (document.getElementById("mic") && $("mic").getAttribute("aria-pressed") === "true"){ $("wordbar").hidden = true; return; }
     var bar = $("wordbar"), tok = tailToken();
     bar.textContent = "";
     if (!tok || tok.text.length < 1){ bar.hidden = true; return; }
@@ -2861,6 +2862,10 @@
     }, []);
   }
   async function captureMany(parts, original, ctx){
+    /* 項目ごとに選び直した枝・予測した枝を覚えておく（送ったあと入力欄は空になるので先に取る） */
+    var chosen = {}, soft = {};
+    parts.forEach(function(t){ var k = t.trim(); if (partChosen[k]) chosen[k] = partChosen[k]; else if (partPred.map[k]) soft[k] = partPred.map[k]; });
+    partChosen = {};
     input.value = ""; clearFusen(); syncClear();
     var needLock = parts.some(function(t){ return detectSecret(t).hit; });
     if (needLock && !currentLock()){
@@ -2875,8 +2880,9 @@
     var hid = 0;
     for (var i = 0; i < parts.length; i++){
       thinking(parts.length + "件に分けて仕分けています…（" + (i + 1) + "/" + parts.length + "）");
-      if (detectSecret(parts[i]).hit){ await captureSecret(parts[i], null, true, ctx); hid++; }
-      else await captureText(parts[i], false, ctx);
+      var pk = parts[i].trim(), pctx = ctx || chosen[pk] || null;
+      if (detectSecret(parts[i]).hit){ await captureSecret(parts[i], null, true, pctx); hid++; }
+      else await captureText(parts[i], false, pctx, soft[pk]);
     }
     note(parts.length + "件に分けて入れました" + (hid ? "（うち " + hid + "件は隠しました）" : "") + "。" + (noticeOpen ? "似たものがあったので、上で確認してください。" : ""));
     send.disabled = false;
@@ -3129,7 +3135,7 @@
   }
   /* openly: 「隠さずに保存」を選んだあと。見られたくない内容かどうかはもう聞かない */
   /* ctx: ＋ から枝を選んで入れたとき、その枝に入れる（Jev の枝えらびより優先） */
-  async function captureText(text, openly, ctx){
+  async function captureText(text, openly, ctx, softCtx){
     send.disabled = true; $("neuronBox").textContent = "";
 
     /* パスワードなどがコードで見つかったら、Jev には送らずにその場で隠す。
@@ -3162,6 +3168,7 @@
     }
     refreshRaw();
     if (ctx){ r.context = ctx; r.forceCtx = ctx; }
+    else if (softCtx && CONTEXTS.indexOf(softCtx) >= 0) r.context = softCtx;
     else if (predCtx && predCtx.jev && predCtx.text === text && CONTEXTS.indexOf(predCtx.name) >= 0) r.context = predCtx.name;
 
     /* 空行で区切って別々のことを書いていたら、分けて入れ直す */
@@ -4365,6 +4372,7 @@
     });
     for (var i = 0; i < pv.lines.length; i++){ if (si < pv.starts.length && pv.starts[si] === i){ k = si; si++; } part.push(k); }
     m.textContent = "";
+    var partTexts = previewParts();
     var lastText = -1; pv.lines.forEach(function(l, i){ if (l.trim()) lastText = i; });
     pv.lines.forEach(function(line, i){
       var el = document.createElement("span"); el.className = "ml";
@@ -4372,7 +4380,8 @@
       var blank = !line.trim(), nextPart = part[i + 1] !== undefined && part[i + 1] !== part[i];
       if (cutLine[i]) el.classList.add("cut");
       else if (part[i] >= 0 && !(blank && (cutLine[i - 1] || nextPart || i > lastText))){
-        el.style.background = "color-mix(in srgb, " + PART_TINTS[part[i] % PART_TINTS.length] + " 16%, transparent)";
+        var pc = partTexts[part[i]] ? partCtx(partTexts[part[i]]) : null;
+        el.style.background = "color-mix(in srgb, " + (pc ? Mind.color(pc.name) : PART_TINTS[part[i] % PART_TINTS.length]) + " 18%, transparent)";
       }
       if (cutTop[i]) el.classList.add("cuttop");
       m.appendChild(el);
@@ -4392,11 +4401,61 @@
     if (lm.length && lm[0].score >= 0.9) return { text:text, name:ctxName(lm[0].n.context), p:null, jev:false };
     return null;
   }
+  /* 空行で分かれるときは、項目ごとにどの枝に入りそうかを1回の Jev でまとめて聞く */
+  var partPred = { key:"", map:{} }, partChosen = {}, partTimer = null, partBusy = false;
+  function previewParts(){
+    var v = input.value, pv = splitPreview(v);
+    if (pv.n < 2) return [];
+    return (pv.secret ? splitEntries(v) : splitBlocks(v)).map(function(t){ return t.trim(); }).filter(Boolean);
+  }
+  function schedulePartPred(){
+    clearTimeout(partTimer);
+    var parts = previewParts(), key = parts.join("\u0001");
+    if (parts.length < 2 || !getCfg().key || partPred.key === key) return;
+    partTimer = setTimeout(async function(){
+      if (partBusy) return;
+      partBusy = true; renderPred();
+      var qs = {};
+      parts.forEach(function(t, i){
+        qs["ctx" + i] = { type:"choice", instructions:"断片 p" + i + " の内容そのものが、どの分類の説明に最もよく当てはまるかを選ぶ。ほかの断片には引きずられない。", criteria: contextCriteria() };
+      });
+      try {
+        var a = answersOf(await jev({ 断片: parts.map(function(t, i){ return { 番号:"p" + i, 内容: safeForJev(t).slice(0, 300) }; }) }, qs)), map = {};
+        parts.forEach(function(t, i){
+          var c = asChoice(a["ctx" + i]); if (c && CONTEXTS.indexOf(c) >= 0) map[t] = c;
+        });
+        partPred = { key:key, map:map };
+      } catch(e){}
+      partBusy = false; renderPred(); renderMirror();
+    }, 450);
+  }
+  /* その項目の枝：自分で選んだもの → Jev の予測 → 近い過去の項目から */
+  function partCtx(t){
+    if (partChosen[t]) return { name:partChosen[t], chosen:true };
+    if (partPred.map[t]) return { name:partPred.map[t], jev:true };
+    var g = guessCtx(t); return g ? { name:g.name } : null;
+  }
   function renderPred(){
     var row = $("predRow"), text = input.value.trim();
     if (!row) return;
     if (catTag || text.length < 2 || scheduleQuery(text) || BRANCH_CMD.test(text)){ row.hidden = true; return; }
-    if (splitPreview(input.value).n > 1){ row.hidden = true; return; }
+    var parts = previewParts();
+    if (parts.length > 1){
+      row.textContent = "";
+      parts.forEach(function(t, i){
+        var g = partCtx(t), b = document.createElement("button"); b.type = "button"; b.className = "predtag";
+        var head = t.split("\n")[0].replace(/\s+/g, " "); head = head.length > 7 ? head.slice(0, 7) + "…" : head;
+        if (g) b.style.setProperty("--c", Mind.color(g.name));
+        b.textContent = "①②③④⑤⑥⑦⑧⑨⑩".charAt(i) + " " + head + " → " + (g ? g.name : (partBusy ? "予測中" : "？")) + " ▾";
+        b.setAttribute("aria-label", (i + 1) + "件目は " + (g ? g.name : "未定") + "。タップで枝を選ぶ");
+        b.onclick = function(){ openPlus(); showCatChoices(function(k){ partChosen[t] = k; closePlus(); renderPred(); renderMirror(); }); };
+        row.appendChild(b);
+      });
+      row.hidden = false;
+      return;
+    }
+    if (!$("predTag")){ row.textContent = ""; var pb = document.createElement("button"); pb.type = "button"; pb.className = "predtag"; pb.id = "predTag";
+      pb.onclick = function(){ openPlus(); showCatChoices(); }; row.appendChild(pb); }
     var g = guessCtx(text);
     if (!g){
       row.hidden = !(getCfg().key && semInFlight);
@@ -4419,17 +4478,21 @@
     $("pmList").hidden = false; $("pmCats").hidden = true;
     $("plusMenu").hidden = false; $("plus").setAttribute("aria-expanded", "true");
   }
-  function showCatChoices(){
+  /* onPick を渡すと、選んだ枝をその関数に渡す（分かれる項目ごとの選び直し）。なければ入力欄の札にする */
+  function showCatChoices(onPick){
     var box = $("pmCats"); box.textContent = "";
+    if (typeof onPick !== "function") onPick = null;
     CONTEXTS.forEach(function(k){
       var b = document.createElement("button"); b.type = "button"; b.textContent = k;
       b.style.setProperty("--c", Mind.color(k));
-      b.onclick = function(){ setCatTag(k, false); };
+      b.onclick = function(){ if (onPick) onPick(k); else setCatTag(k, false); };
       box.appendChild(b);
     });
-    var nb = document.createElement("button"); nb.type = "button"; nb.className = "pm-new"; nb.textContent = "＋ 新しい枝";
-    nb.onclick = function(){ setCatTag("", true); };
-    box.appendChild(nb);
+    if (!onPick){
+      var nb = document.createElement("button"); nb.type = "button"; nb.className = "pm-new"; nb.textContent = "＋ 新しい枝";
+      nb.onclick = function(){ setCatTag("", true); };
+      box.appendChild(nb);
+    }
     $("pmList").hidden = true; box.hidden = false;
   }
   function setCatTag(name, isNew){
@@ -4451,8 +4514,8 @@
   send.addEventListener("click", capture);
   input.addEventListener("scroll", function(){ $("inputMirror").scrollTop = input.scrollTop; });
   $("plus").addEventListener("click", function(){ if ($("plusMenu").hidden) openPlus(); else closePlus(); });
-  $("pmCat").addEventListener("click", showCatChoices);
-  $("predTag").addEventListener("click", function(){ openPlus(); showCatChoices(); });
+  $("pmCat").addEventListener("click", function(){ showCatChoices(); });
+  $("predTag").onclick = function(){ openPlus(); showCatChoices(); };
   $("catX").addEventListener("click", function(){ clearCatTag(); input.focus(); });
   $("catNew").addEventListener("keydown", function(e){
     if (e.key === "Enter" && !e.isComposing){ e.preventDefault(); input.focus(); }
@@ -4497,14 +4560,16 @@
     vv.addEventListener("scroll", fit);
     fit();
   })();
-  input.addEventListener("input", function(){
+  input.addEventListener("input", function(e){
+    /* 自分で打ち始めたら、音声のあとの改行ボタンは消す */
+    if (e.isTrusted && statusEl.querySelector(".vbtn")) statusEl.hidden = true;
     if (recallState && input.value.trim()) recallState = null;
     if (input.value.trim()){ todayDismissed = true; Mind.unhold(); }
-    renderMirror();
+    renderMirror(); schedulePartPred();
     renderWordbar(); scheduleWordJev();
     renderFusen(); scheduleSemantic();
   });
-  input.addEventListener("click", renderWordbar);
+  input.addEventListener("click", function(){ if (statusEl.querySelector(".vbtn")) statusEl.hidden = true; renderWordbar(); });
   input.addEventListener("compositionend", function(){ renderWordbar(); scheduleWordJev(); });
   input.addEventListener("keydown", function(e){
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter"){ e.preventDefault(); capture(); }
@@ -4622,6 +4687,8 @@
         input.value = base + t;
         /* 打ったときと同じ扱いにする（×・分かれ目・入りそうな枝・候補） */
         input.dispatchEvent(new Event("input"));
+        /* 今話している所が見えるよう、いちばん下まで送る */
+        input.scrollTop = input.scrollHeight; $("inputMirror").scrollTop = input.scrollTop;
       };
       rec.onstart = function(){ on = true; err = ""; mic.setAttribute("aria-pressed","true"); mic.setAttribute("aria-label","音声入力を止める"); mic.innerHTML = MIC_STOP; note("聞いています…もう一度押すと止まります。"); };
       rec.onend   = function(){
