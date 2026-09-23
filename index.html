@@ -556,6 +556,10 @@
     catch(e){ nodes = []; }
     var RENAMED = { "副業/EC":"副業", "学習":"学び", "家族":"人間関係" };
     nodes.forEach(function(n){
+      if (!n.secret && URL_IN_TITLE.test(n.title || "")){
+        var m0 = (n.materials || []).slice().sort(function(a, b){ return a.at - b.at; })[0];
+        n.title = titleOf(m0 && linksIn(m0.text).length ? m0.text : n.title);
+      }
       if (RENAMED[n.context] && CONTEXTS.indexOf(n.context) < 0 && CONTEXTS.indexOf(RENAMED[n.context]) >= 0)
         n.context = RENAMED[n.context];
     });
@@ -1471,10 +1475,14 @@
     }
   }
   function flushSheet(){ if (sheetDirty && openId && !editingInSheet()){ sheetDirty = false; openSheet(openId); } }
+  /* 見出しにはリンクを入れない。リンクだけのメモは「App Store」のようにリンク先の名前にする */
   function titleOf(text){
-    text = String(text || "").trim().replace(/https?:\/\/(?:www\.)?/g, "");
+    var raw = String(text || "").trim();
+    text = raw.replace(URL_RE, " ").replace(/[ \t\u3000]+/g, " ").replace(/\s*\n\s*/g, " ").trim();
+    if (!text){ var l = linksIn(raw); text = l.length ? linkName(l[0]) : raw; }
     return text.length > 30 ? text.slice(0, 30) + "…" : text;
   }
+  var URL_IN_TITLE = /https?:\/\/|www\.|[a-z0-9\-]+\.(?:com|co\.jp|jp|net|org|app|io|be|gl|ly|me|tv)\/\S*/i;
 
   /* ============================ リンク ============================ */
   /* http(s) と www. で始まるものだけをリンクにする（javascript: などは開かない） */
@@ -1492,10 +1500,12 @@
     if (n.secret) return [];
     return linksIn([n.conclusion].concat((n.materials || []).map(function(m){ return m.text; })).concat([n.title]).join("\n"));
   }
+  var LINK_NAMES = { "apps.apple.com":"App Store", "youtube.com":"YouTube", "youtu.be":"YouTube", "tiktok.com":"TikTok",
+    "instagram.com":"Instagram", "x.com":"X", "twitter.com":"X", "amazon.co.jp":"Amazon", "maps.app.goo.gl":"Google マップ" };
+  function linkName(x){ var host = x.hostname.replace(/^www\./, ""); return LINK_NAMES[host] || host; }
   function linkLabel(x){
     var host = x.hostname.replace(/^www\./, ""), path = (x.pathname + x.search).replace(/\/$/, "");
-    var name = { "apps.apple.com":"App Store", "youtube.com":"YouTube", "youtu.be":"YouTube", "tiktok.com":"TikTok",
-      "instagram.com":"Instagram", "x.com":"X", "twitter.com":"X", "amazon.co.jp":"Amazon", "maps.app.goo.gl":"Google マップ" }[host];
+    var name = LINK_NAMES[host];
     var s = (name ? name + "  " : host) + (name ? path : path).slice(0, name ? 28 : 34);
     return s.length > 42 ? s.slice(0, 42) + "…" : s;
   }
