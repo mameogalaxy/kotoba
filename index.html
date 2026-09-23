@@ -141,6 +141,9 @@
 
   .viewbar{display:flex; align-items:center; gap:6px; padding-block:6px 8px; border-bottom:1px solid var(--line)}
   .viewbar .tabs{border:0; padding:0; flex:1}
+  .daybar{display:flex; align-items:center; gap:10px; flex:1; min-width:0; white-space:nowrap; overflow:hidden}
+  .daybar .day{font-weight:700; font-size:15px; color:var(--ink)}
+  .daybar .wx{background:transparent; border:0; padding:4px 2px; font:inherit; font-size:13px; color:var(--ink2); overflow:hidden; text-overflow:ellipsis; min-width:0}
   .legend{display:flex; gap:10px; flex:1; min-width:0; align-items:center; font-size:10.5px; color:var(--muted); flex-wrap:nowrap; white-space:nowrap; overflow:hidden}
   .viewbtn{background:transparent; border:1px solid var(--line); border-radius:99px; padding:4px 12px; font-size:11.5px; color:var(--ink2); white-space:nowrap}
   .viewbtn:hover{background:var(--surface2)}
@@ -342,13 +345,12 @@
         <button data-tab="done" type="button">解決済み <span class="n" id="nDone"></span></button>
         <button data-tab="note" type="button">メモ <span class="n" id="nNote"></span></button>
       </nav>
-      <div class="legend" id="legend" hidden>
-        <span><i class="lg"></i>宙ぶらりん</span>
-        <span>✓ 解決済み</span>
-        <span><i class="lg note"></i>メモ</span>
+      <div class="daybar" id="legend" hidden>
+        <span class="day" id="dayDate"></span>
+        <button class="wx" id="wx" type="button">📍 天気を表示</button>
       </div>
       <button class="engine" id="engine" type="button">設定</button>
-      <button class="viewbtn" id="viewToggle" type="button">リスト</button>
+      <button class="viewbtn" id="viewToggle" type="button" style="display:none">リスト</button>
     </div>
   </div>
 
@@ -1395,7 +1397,7 @@
       });
       try {
         var res = await jev({
-          今日: todayLabel + " " + todOf(d.getHours()),
+          今日: todayLabel + " " + todOf(d.getHours()) + (wxForJev() ? "・天気 " + wxForJev() : ""),
           読み方: "項目の中の「今日」「明日」「来週」「◯日まで」などは、その項目を書いた日を基準に読む。",
           項目: items
         }, qs);
@@ -3919,8 +3921,68 @@
     renderFusen();
   }
 
+
+  /* ============================ 今日の日付と天気 ============================ */
+  /* 天気は Open-Meteo（キー不要）から。位置は最初に「天気を表示」を押したときだけ聞き、約1kmに丸めて覚える */
+  var WX_KEY = "nou.wx.v1", wx = null, wxBusy = false;
+  try { wx = JSON.parse(localStorage.getItem(WX_KEY) || "null"); } catch(e){}
+  var WX_CODES = { 0:["☀️","快晴"], 1:["🌤","晴れ"], 2:["⛅","晴れ時々くもり"], 3:["☁️","くもり"], 45:["🌫","霧"], 48:["🌫","霧"],
+    51:["🌦","霧雨"], 53:["🌦","霧雨"], 55:["🌦","霧雨"], 56:["🌧","着氷性の霧雨"], 57:["🌧","着氷性の霧雨"],
+    61:["☔","小雨"], 63:["☔","雨"], 65:["☔","大雨"], 66:["🌧","みぞれ"], 67:["🌧","みぞれ"],
+    71:["❄️","小雪"], 73:["❄️","雪"], 75:["❄️","大雪"], 77:["❄️","雪"],
+    80:["🌦","にわか雨"], 81:["🌧","にわか雨"], 82:["⛈","激しいにわか雨"], 85:["🌨","にわか雪"], 86:["🌨","にわか雪"],
+    95:["⛈","雷雨"], 96:["⛈","雷雨"], 99:["⛈","雷雨"] };
+  function saveWx(){ try { localStorage.setItem(WX_KEY, JSON.stringify(wx)); } catch(e){} }
+  function wxText(){
+    if (!wx || !wx.today || wx.today.day !== dayKey()) return "";
+    var t = wx.today, c = WX_CODES[t.code] || ["", ""];
+    return (c[0] + " " + c[1]).trim() + " " + t.max + "°/" + t.min + "°" + (t.pop !== null ? " ☂" + t.pop + "%" : "") + (wx.place ? " · " + wx.place : "");
+  }
+  /* Jev の「今日のこと」の判定に渡す一文 */
+  function wxForJev(){
+    if (!wx || !wx.today || wx.today.day !== dayKey()) return "";
+    var t = wx.today, c = WX_CODES[t.code] || ["", "不明"];
+    return c[1] + " 最高" + t.max + "° 最低" + t.min + "°" + (t.pop !== null ? " 降水確率" + t.pop + "%" : "");
+  }
+  function renderDay(){
+    var d = new Date();
+    $("dayDate").textContent = (d.getMonth() + 1) + "/" + d.getDate() + "（" + DOW[d.getDay()] + "）";
+    var el = $("wx"), t = wxText();
+    el.textContent = wxBusy ? "天気を取得中…" : t || (wx && wx.pos ? "天気を更新" : "📍 天気を表示");
+    el.setAttribute("aria-label", t ? "天気 " + t + "（タップで更新）" : "天気を表示");
+  }
+  function wxPosition(ask){
+    return new Promise(function(resolve){
+      if (wx && wx.pos && !ask) return resolve(wx.pos);
+      if (!navigator.geolocation) return resolve({ lat:35.68, lon:139.76, place:"東京" });
+      navigator.geolocation.getCurrentPosition(function(p){
+        resolve({ lat: Math.round(p.coords.latitude * 100) / 100, lon: Math.round(p.coords.longitude * 100) / 100, place:"" });
+      }, function(){ resolve(wx && wx.pos ? wx.pos : { lat:35.68, lon:139.76, place:"東京" }); },
+      { enableHighAccuracy:false, timeout:10000, maximumAge:3600000 });
+    });
+  }
+  async function loadWeather(ask){
+    if (wxBusy) return;
+    if (!ask && (!wx || !wx.pos)) { renderDay(); return; }   /* 位置はまだ聞いていない */
+    if (!ask && wx && wx.today && wx.today.day === dayKey() && Date.now() - (wx.at || 0) < 30 * 60000){ renderDay(); return; }
+    wxBusy = true; renderDay();
+    try {
+      var pos = await wxPosition(ask);
+      var url = "https://api.open-meteo.com/v1/forecast?latitude=" + pos.lat + "&longitude=" + pos.lon
+        + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=1";
+      var j = await (await fetch(url)).json(), dl = j && j.daily;
+      if (!dl || !dl.weather_code) throw new Error("bad");
+      wx = { pos:pos, place:pos.place || "", at:Date.now(), today:{ day:dayKey(), code:dl.weather_code[0],
+        max: Math.round(dl.temperature_2m_max[0]), min: Math.round(dl.temperature_2m_min[0]),
+        pop: dl.precipitation_probability_max && dl.precipitation_probability_max[0] !== null ? Math.round(dl.precipitation_probability_max[0]) : null } };
+      saveWx();
+    } catch(e){ if (ask) note("天気を取れませんでした。電波のよいところでもう一度タップしてください。"); }
+    wxBusy = false; renderDay();
+  }
+
   /* ============================ イベント ============================ */
   send.addEventListener("click", capture);
+  $("wx").addEventListener("click", function(){ loadWeather(true); });
   function growInput(){
     input.style.height = "auto";
     input.style.height = Math.min(140, input.scrollHeight) + "px";
@@ -3995,6 +4057,7 @@
   });
   var tagSig = "";
   setInterval(function(){
+    renderDay(); loadWeather(false);
     var sig = dayKey() + "|" + nodes.map(todayTag).join("|");
     if (sig !== tagSig){ var first = !tagSig; tagSig = sig; if (!first){ render(); pinToday(); } }
   }, 60000);
@@ -4067,10 +4130,12 @@
   Mind.init();
   render();
   setView("map");
+  renderDay(); loadWeather(false);
   setTimeout(remindBackup, 1500);
   setTimeout(judgeToday, 600);
   document.addEventListener("visibilitychange", function(){
     if (document.hidden) return;
+    renderDay(); loadWeather(false);
     /* 日付が変わったか、しばらく離れていたら、もう一度「今日のこと」から見せる */
     if (todayCache.date !== dayKey() || Date.now() - todayShownAt > 60 * 60 * 1000){
       if (!input.value.trim()) todayDismissed = false;
