@@ -274,6 +274,10 @@
   .label-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin:20px 0 8px}
   .label-row .block-label{margin:0}
   .mat time{display:block; font-size:11px; color:var(--muted); margin-top:3px}
+  .secret{border:1px dashed var(--line); border-radius:var(--radius); padding:12px 13px; margin-bottom:12px; background:var(--surface)}
+  .secret .primary{margin-top:10px}
+  .secret time{font-size:11px; color:var(--muted)}
+  .secret-mask{margin:0; font-size:14px; color:var(--ink2); white-space:pre-wrap; word-break:break-all}
   .concl{background:var(--done-soft); border:1px solid var(--done); border-radius:var(--radius); padding:12px 13px; font-size:14px}
   .concl time{display:block; font-size:11px; color:var(--muted); margin-top:6px}
   textarea.box, input.box{
@@ -414,9 +418,20 @@
       </div>
       <div id="probe"></div>
 
+      <p class="block-label">🔒 隠したメモ（Face ID）</p>
+      <p class="hint" style="margin:0 0 10px">
+        パスワード・暗証番号・カード番号・APIキーなどは、入れたときに自動で●にして、暗号化して保存します。
+        見るときは Face ID。見つけたものは Jev に送らず、枝分けには●にした文字だけを使います。
+        Face ID の登録（パスキー）は iCloud キーチェーンに入ります。これを消すと、隠したメモは二度と開けなくなります。
+      </p>
+      <div class="sheet-actions" style="margin-top:0">
+        <button class="ghost" id="lockSetup" type="button">Face ID を登録する</button>
+      </div>
+      <p class="hint" id="lockNote" style="margin:8px 0 0"></p>
+
       <p class="block-label">バックアップ</p>
       <p class="hint" style="margin:0 0 10px">
-        メモ・問い・結論・材料と、枝の分け方を1つのファイルにまとめます。APIキーは入りません。
+        メモ・問い・結論・材料と、枝の分け方を1つのファイルにまとめます。APIキーは入りません。隠したメモは暗号文のまま入るので、Face ID がないと読めません。
         データはこの端末のブラウザの中にしかないので、ブラウザのデータを消したり機種変更したりする前に保存してください。
       </p>
       <div class="sheet-actions" style="margin-top:0">
@@ -700,7 +715,7 @@
       }),
       現在時刻: new Date().toISOString()
     };
-    var res = await jev(state, Object.assign(classifyQuestions(open), recallQuestions()));
+    var res = await jev(state, Object.assign(classifyQuestions(open), recallQuestions(), secretQuestion()));
     var a = answersOf(res);
 
     var impIdx   = asScore(a.importance, IMP_LEVELS);
@@ -720,6 +735,7 @@
       answerOf:   asChoice(a.answerOf),
       answerConf: asConf(a.isAnswer),
       recall:     readRecall(a, text),
+      secret:     asNoul(a.secret),
       usage:      res && res.usage
     };
   }
@@ -1198,7 +1214,8 @@
     ht.className = "title-edit"; ht.rows = 1; ht.value = n.title || ""; ht.maxLength = 200;
     ht.setAttribute("aria-label", "見出し（タップして直せます）"); ht.spellcheck = false;
     sheetBody.appendChild(ht);
-    liveEdit(ht, true, function(v){
+    if (n.secret){ ht.readOnly = true; requestAnimationFrame(function(){ autoGrow(ht); }); }
+    else liveEdit(ht, true, function(v){
       if (v === n.title) return;
       editNode(n, function(){
         var old = n.title;
@@ -1273,6 +1290,8 @@
     sheetBody.appendChild(picker);
     sheetBody.appendChild(form);
 
+    if (n.secret){ secretBlock(n); sheet.hidden = false; return; }
+
     if (isStale(n)){
       var st = document.createElement("div"); st.className = "stale";
       st.textContent = "この結論は " + ago(n.conclusionAt) + " のものです。前提が変わっていませんか？";
@@ -1339,7 +1358,7 @@
       var re = document.createElement("div"); re.className = "sheet-actions";
       var rb = document.createElement("button"); rb.type="button"; rb.className = "ghost"; rb.textContent = "宙ぶらりんに戻す";
       rb.onclick = function(){ n.status = "open"; put(n); closeSheet(); };
-      re.appendChild(rb); addDelete(re, n); sheetBody.appendChild(re);
+      re.appendChild(rb); re.appendChild(hideButton(n)); addDelete(re, n); sheetBody.appendChild(re);
     } else {
       var ta = document.createElement("textarea");
       ta.className = "box"; ta.placeholder = "わかったこと、決めたことを一行で。"; ta.value = n.conclusion || "";
@@ -1352,9 +1371,14 @@
         n.conclusion = v; n.conclusionAt = Date.now(); n.status = "done";
         put(n); closeSheet(); currentTab = "done"; syncTabs(); render();
       };
-      act.appendChild(done); addDelete(act, n); sheetBody.appendChild(act);
+      act.appendChild(done); act.appendChild(hideButton(n)); addDelete(act, n); sheetBody.appendChild(act);
     }
     sheet.hidden = false;
+  }
+  function hideButton(n){
+    var b = document.createElement("button"); b.type = "button"; b.className = "ghost"; b.textContent = "🔒 隠す";
+    b.onclick = function(){ hideNode(n, false); };
+    return b;
   }
   function addDelete(box, n){
     var sp = document.createElement("span"); sp.className = "spacer"; box.appendChild(sp);
@@ -1454,6 +1478,8 @@
   async function editNode(n, mutate){
     var before = { ctx: ctxName(n.context), status: n.status };
     mutate();
+    /* 直した文字にパスワードなどが入ったら、Jev に送らずに隠す */
+    if (!n.secret && nodeHasSecret(n)){ hideNode(n, true); return; }
     put(n);
     if (!getCfg().key){
       sheetNote = { id:n.id, text:"保存しました（APIキーがないので振り分けはそのままです）" };
@@ -1640,7 +1666,7 @@
     if (!cand.length) return;
     semInFlight = text; renderFusen();
     try {
-      var res = await rank(text, cand), ids = res.ids, noteText = "", tsById = {};
+      var res = await rank(safeForJev(text), cand), ids = res.ids, noteText = "", tsById = {};
       var rec = res.recall;
       if (rec.isRecall !== null && rec.isRecall >= 0.5){
         var win = windowOf(rec) || windowOf(parseTimeLocal(text));
@@ -1808,6 +1834,378 @@
     }, 250);
   }
 
+  /* ============================ 隠す（Face ID で暗号化） ============================ */
+  /* パスワードなどは、この端末の中にも暗号文しか残さない。
+     Face ID（パスキー）の PRF から包み鍵を作り、「開ける鍵」を包んで保存しておく。
+     隠すときは公開鍵だけで暗号化できるので、Face ID が要るのは中身を見るときだけ。 */
+  var LOCK_KEY = "nou.lock.v1", UNLOCK_MS = 60000, REVEAL_MS = 30000;
+  var MASK = "●●●●●●";
+  var SECRET_WORD = /パスワード|ぱすわーど|パスコード|暗証番号|認証コード|確認コード|セキュリティコード|シークレット|秘密鍵|シードフレーズ|リカバリーコード|復元コード|バックアップコード|アクセストークン|トークン|api ?キー|api ?key|apikey|password|passwd|passcode|secret|token|private ?key|seed ?phrase|cvc|cvv|pin|pass|pw/gi;
+  /* 言葉のすぐ後ろ（「：」「は」などを挟んでもよい）に続く英数字・記号を値とみなす */
+  var VALUE_AFTER = /^\s*(?:[:：=＝]|は|→|->)?\s*「?([!-~！-～]{3,})/;
+  var STRONG_RES = [
+    /(?:sk|pk|rk)[-_][A-Za-z0-9_\-]{16,}/g, /gh[pousr]_[A-Za-z0-9]{20,}/g, /github_pat_[A-Za-z0-9_]{20,}/g,
+    /xox[abprs]-[A-Za-z0-9\-]{10,}/g, /AKIA[0-9A-Z]{16}/g, /AIza[0-9A-Za-z_\-]{30,}/g
+  ];
+  function luhn(d){
+    var s = 0, alt = false;
+    for (var i = d.length - 1; i >= 0; i--){ var x = +d.charAt(i); if (alt){ x *= 2; if (x > 9) x -= 9; } s += x; alt = !alt; }
+    return s % 10 === 0;
+  }
+  /* コードだけで「見られたくない値」を探す。見つかった部分を●にした見出しも返す */
+  function detectSecret(text){
+    text = String(text || "");
+    var ranges = [], keyword = false, m;
+    SECRET_WORD.lastIndex = 0;
+    while ((m = SECRET_WORD.exec(text))){
+      var s = m.index, e = s + m[0].length;
+      /* passport・Pinterest・spin などは言葉の一部なので数えない */
+      if (/^[a-z]/i.test(m[0]) && (/[a-z0-9]/i.test(text.charAt(s - 1)) || /[a-z]/i.test(text.charAt(e)))) continue;
+      keyword = true;
+      var v = VALUE_AFTER.exec(text.slice(e));
+      if (v){ var vs = e + v[0].length - v[1].length; ranges.push([vs, vs + v[1].length]); }
+    }
+    STRONG_RES.forEach(function(re){ re.lastIndex = 0; while ((m = re.exec(text))) ranges.push([m.index, m.index + m[0].length]); });
+    var CARD = /\d(?:[ \-]?\d){12,18}/g;
+    while ((m = CARD.exec(text))){ var dg = m[0].replace(/\D/g, ""); if (luhn(dg)) ranges.push([m.index, m.index + m[0].length]); }
+    /* 20文字以上で大文字・小文字・数字が混ざった塊は、鍵やトークンの可能性が高い */
+    var LONG = /[A-Za-z0-9!#$%&*+\-_.~^]{20,}/g;
+    while ((m = LONG.exec(text))){
+      var w = m[0], before = text.charAt(m.index - 1);
+      if (/[\/=?:]/.test(before)) continue;
+      if (/[a-z]/.test(w) && /[A-Z]/.test(w) && /\d/.test(w)) ranges.push([m.index, m.index + w.length]);
+    }
+    if (!ranges.length) return { hit:false, keyword:keyword, label:text };
+    ranges.sort(function(a, b){ return a[0] - b[0]; });
+    var out = "", pos = 0;
+    ranges.forEach(function(r){
+      if (r[1] <= pos) return;
+      out += text.slice(pos, Math.max(pos, r[0])) + MASK; pos = r[1];
+    });
+    out += text.slice(pos);
+    return { hit:true, keyword:keyword, label: out.replace(/\s+/g, " ").trim() };
+  }
+  /* Jev に送ってよい形。値が見つかればそこを●にしたものを送る */
+  function safeForJev(text){ var d = detectSecret(text); return d.hit ? d.label : text; }
+  function secretLabel(text){ var d = detectSecret(text); return d.hit ? d.label : "隠したメモ " + MASK; }
+  function secretQuestion(){
+    return { secret: {
+      type:"noul",
+      instructions:"この断片に、他人に見られると困る秘密の値そのもの（パスワード・暗証番号・カード番号・APIキー・口座番号・ログイン情報など）が書かれているか。『パスワードを変える』のように話題に出てくるだけで、値そのものが書かれていなければ false。",
+      criteria:{ "true":"秘密の値そのものが書かれている", "false":"秘密の値は書かれていない" }
+    }};
+  }
+
+  var TE = new TextEncoder(), TD = new TextDecoder();
+  function b64(buf){ var b = new Uint8Array(buf), s = ""; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); }
+  function unb64(s){ var t = atob(String(s || "")), b = new Uint8Array(t.length); for (var i = 0; i < t.length; i++) b[i] = t.charCodeAt(i); return b; }
+  function rand(n){ return crypto.getRandomValues(new Uint8Array(n)); }
+  function vaultSupported(){ return !!(window.isSecureContext && window.PublicKeyCredential && navigator.credentials && window.crypto && crypto.subtle); }
+  function getLocks(){
+    try { var o = JSON.parse(localStorage.getItem(LOCK_KEY) || "null"); if (o && o.locks && typeof o.locks === "object") return o; } catch(e){}
+    return { current:null, locks:{} };
+  }
+  function setLocks(o){ try { localStorage.setItem(LOCK_KEY, JSON.stringify(o)); } catch(e){} }
+  function currentLock(){ var o = getLocks(); return (o.current && o.locks[o.current] && o.locks[o.current].pub) ? o.locks[o.current] : null; }
+  function validLock(l){ return !!(l && typeof l.cred === "string" && typeof l.salt === "string" && l.pub && l.wrap && typeof l.wrap.ct === "string"); }
+  function vaultError(code, msg){ var e = new Error(msg); e.code = code; return e; }
+
+  var EC = { name:"ECDH", namedCurve:"P-256" };
+  async function wrapKeyFrom(prf, salt){
+    var base = await crypto.subtle.importKey("raw", prf, "HKDF", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({ name:"HKDF", hash:"SHA-256", salt:salt, info:TE.encode("nou-vault-v1") },
+      base, { name:"AES-GCM", length:256 }, false, ["encrypt", "decrypt"]);
+  }
+  function prfOf(cred){
+    var ext = (cred && cred.getClientExtensionResults) ? cred.getClientExtensionResults() : {};
+    var p = ext && ext.prf;
+    return { enabled: !!(p && (p.enabled || p.results)), first: (p && p.results && p.results.first) || null };
+  }
+  /* Face ID を出して、この登録の PRF（毎回同じ32バイト）を受け取る */
+  async function faceGet(lock){
+    var cred = await navigator.credentials.get({ publicKey: {
+      challenge: rand(32), timeout: 60000, userVerification: "required",
+      allowCredentials: [{ type:"public-key", id: unb64(lock.cred) }],
+      extensions: { prf: { eval: { first: unb64(lock.salt) } } }
+    }});
+    var p = prfOf(cred);
+    if (!p.first) throw vaultError("no_prf", "この端末では Face ID から鍵を作れませんでした（iOS 18 以降が必要です）");
+    return p.first;
+  }
+
+  var pendingLock = null, unlocked = {};
+  /* 最初の1回だけ。パスキーを作り、開ける鍵を作って包む */
+  async function setupLock(){
+    if (!vaultSupported()) throw vaultError("unsupported", "このブラウザは Face ID での暗号化に対応していません");
+    var salt = rand(32);
+    var cred = await navigator.credentials.create({ publicKey: {
+      rp: { name:"脳みそ仕分け" },
+      user: { id: rand(16), name:"脳みそ仕分け", displayName:"脳みそ仕分け（隠したメモ）" },
+      challenge: rand(32), timeout: 60000, attestation: "none",
+      pubKeyCredParams: [{ type:"public-key", alg:-7 }, { type:"public-key", alg:-257 }],
+      authenticatorSelection: { authenticatorAttachment:"platform", residentKey:"required", requireResidentKey:true, userVerification:"required" },
+      extensions: { prf: { eval: { first: salt } } }
+    }});
+    var p = prfOf(cred);
+    if (!p.enabled) throw vaultError("no_prf", "この端末では Face ID から鍵を作れませんでした（iOS 18 以降が必要です）");
+    pendingLock = { id: "k" + Date.now().toString(36), cred: b64(cred.rawId), salt: b64(salt), at: Date.now() };
+    /* 作った直後に PRF を返さない端末では、続けてもう一度 Face ID を出す */
+    return finishLock(p.first);
+  }
+  async function finishLock(prf){
+    var lock = pendingLock; if (!lock) throw vaultError("no_lock", "登録をやり直してください");
+    if (!prf) prf = await faceGet(lock);
+    var pair = await crypto.subtle.generateKey(EC, true, ["deriveKey"]);
+    var wk = await wrapKeyFrom(prf, unb64(lock.salt)), iv = rand(12);
+    var ct = await crypto.subtle.encrypt({ name:"AES-GCM", iv:iv }, wk,
+      TE.encode(JSON.stringify(await crypto.subtle.exportKey("jwk", pair.privateKey))));
+    lock.pub = await crypto.subtle.exportKey("jwk", pair.publicKey);
+    lock.wrap = { iv: b64(iv), ct: b64(ct) };
+    var o = getLocks(); o.locks[lock.id] = lock; o.current = lock.id; setLocks(o);
+    unlocked[lock.id] = { key: pair.privateKey, until: Date.now() + UNLOCK_MS };
+    pendingLock = null;
+    return lock;
+  }
+  /* 公開鍵で暗号化する（Face ID は要らない） */
+  async function sealText(text){
+    var lock = currentLock(); if (!lock) throw vaultError("no_lock", "Face ID がまだ登録されていません");
+    var pub = await crypto.subtle.importKey("jwk", lock.pub, EC, false, []);
+    var eph = await crypto.subtle.generateKey(EC, true, ["deriveKey"]);
+    var aes = await crypto.subtle.deriveKey({ name:"ECDH", public:pub }, eph.privateKey, { name:"AES-GCM", length:256 }, false, ["encrypt"]);
+    var iv = rand(12), ct = await crypto.subtle.encrypt({ name:"AES-GCM", iv:iv }, aes, TE.encode(text));
+    return { v:1, k: lock.id, epk: await crypto.subtle.exportKey("jwk", eph.publicKey), iv: b64(iv), ct: b64(ct) };
+  }
+  /* 開ける鍵は Face ID のあと1分だけ覚えておく（続けて見るときに毎回聞かない） */
+  async function privKey(lockId){
+    var u = unlocked[lockId]; if (u && u.until > Date.now()) return u.key;
+    var lock = getLocks().locks[lockId];
+    if (!validLock(lock)) throw vaultError("no_lock", "この内容を開ける Face ID の登録が、この端末にありません。隠したときのバックアップを読み込むと戻ります。");
+    var prf = await faceGet(lock);
+    var wk = await wrapKeyFrom(prf, unb64(lock.salt)), jwk;
+    try { jwk = JSON.parse(TD.decode(await crypto.subtle.decrypt({ name:"AES-GCM", iv: unb64(lock.wrap.iv) }, wk, unb64(lock.wrap.ct)))); }
+    catch(e){ throw vaultError("bad_key", "Face ID は通りましたが、鍵が合いませんでした。"); }
+    var key = await crypto.subtle.importKey("jwk", jwk, EC, false, ["deriveKey"]);
+    unlocked[lockId] = { key:key, until: Date.now() + UNLOCK_MS };
+    return key;
+  }
+  async function openText(enc){
+    var key = await privKey(enc.k);
+    var epk = await crypto.subtle.importKey("jwk", enc.epk, EC, false, []);
+    var aes = await crypto.subtle.deriveKey({ name:"ECDH", public:epk }, key, { name:"AES-GCM", length:256 }, false, ["decrypt"]);
+    try { return TD.decode(await crypto.subtle.decrypt({ name:"AES-GCM", iv: unb64(enc.iv) }, aes, unb64(enc.ct))); }
+    catch(e){ throw vaultError("bad_key", "開けませんでした（データが壊れているか、別の登録で隠されたものです）。"); }
+  }
+  function vaultMessage(e){
+    if (e && e.name === "NotAllowedError") return "Face ID がキャンセルされたか、時間切れになりました。";
+    if (e && e.name === "InvalidStateError") return "この端末にはもう登録があります。";
+    return (e && e.message) || "Face ID を使えませんでした。";
+  }
+
+  /* 見られたくない内容を、暗号文だけ持つ項目にする。見出しと材料には●にしたものだけを入れる */
+  async function makeSecretNode(text, r){
+    var enc = await sealText(text), t = Date.now(), label = secretLabel(text);
+    return {
+      id:newId(), title: "🔒 " + titleOf(label),
+      kind: (r && r.kind) || "事実メモ", context: (r && r.context) || "その他", status:"note",
+      importance: (r && r.importance) || 3, freshness: (r && r.freshness) || "数週間もつ",
+      createdAt:t, updatedAt:t, materials:[{ text:label, at:t }], conclusion:"", conclusionAt:0,
+      secret:true, enc:enc
+    };
+  }
+  function nodeText(n){
+    var mats = (n.materials || []).slice().sort(function(a, b){ return a.at - b.at; }).map(function(m){ return m.text; });
+    var body = mats.length ? mats.join("\n\n") : (n.title || "");
+    return body + (n.conclusion ? "\n\n結論: " + n.conclusion : "");
+  }
+  function nodeHasSecret(n){
+    return [n.title, n.conclusion].concat((n.materials || []).map(function(m){ return m.text; }))
+      .some(function(t){ return t && detectSecret(t).hit; });
+  }
+  function restoreInput(text){
+    input.value = text; growInput(); syncClear(); input.focus(); send.disabled = false;
+  }
+  /* Face ID の登録がまだなら、ここで登録してから続ける */
+  function askLock(why, then, openly, cancel){
+    var skip = [];
+    if (openly) skip.push({ label:"隠さずに保存", run: openly });
+    skip.push({ label: openly ? "保存しない" : "やめる", run: cancel || function(){} });
+    if (!vaultSupported()){
+      showNotice(why + "ただ、このブラウザは Face ID での暗号化に対応していません（iPhone の Safari・iOS 18 以降が必要です）。", skip);
+      return;
+    }
+    showNotice(why + "隠して保存するために、最初の1回だけ Face ID を登録します。", [
+      { label:"Face ID を登録して隠す", primary:true, run: function(){ registerLock(then, openly, cancel); } }
+    ].concat(skip));
+  }
+  function registerLock(then, openly, cancel){
+    var skip = [];
+    if (openly) skip.push({ label:"隠さずに保存", run: openly });
+    skip.push({ label: openly ? "保存しない" : "やめる", run: cancel || function(){} });
+    var done = function(){ showLockNote(); then(); };
+    var fail = function(e){
+      /* 登録はできたが、続けての Face ID がタップなしでは出せなかったとき */
+      if (pendingLock && e && e.name === "NotAllowedError"){
+        showNotice("登録できました。仕上げにもう一度 Face ID で確認してください。", [
+          { label:"Face ID で確認", primary:true, run: function(){ finishLock(null).then(done, fail); } }
+        ].concat(skip));
+        return;
+      }
+      showNotice("Face ID を登録できませんでした：" + vaultMessage(e), skip);
+    };
+    setupLock().then(done, fail);
+  }
+
+  async function captureSecret(text, r){
+    input.value = ""; clearFusen(); syncClear();
+    if (!currentLock()){
+      askLock("パスワードなど、見られたくない内容がありそうです。",
+        function(){ captureSecret(text, r); },
+        function(){ if (r){ saveClassified(text, r); send.disabled = false; } else captureText(text, true); },
+        function(){ restoreInput(text); note("保存しませんでした。入力欄に戻しました。"); });
+      send.disabled = false;
+      return;
+    }
+    try {
+      var n = await makeSecretNode(text, r);
+      put(n);
+      note("見られたくない内容っぽいので、隠して保存しました。見るときは項目をタップして Face ID。");
+      Mind.flash(n.id, "🔒 隠しました");
+      /* コードで見つけたときは Jev に何も送っていないので、●にした見出しだけで枝を決める */
+      if (!r && getCfg().key) reclassifyNode(n).then(function(){ n.status = "note"; saveNodes(); render(); }).catch(function(){});
+    } catch(e){
+      restoreInput(text);
+      note("隠せませんでした：" + vaultMessage(e), "bad");
+    }
+    send.disabled = false;
+  }
+
+  /* 表示中の中身。30秒で消える。アプリを離れたらすぐ消す */
+  var revealed = {}, revealTimer = null;
+  function tickReveal(){
+    var now = Date.now(), any = false;
+    Object.keys(revealed).forEach(function(id){
+      if (revealed[id].until <= now){
+        delete revealed[id];
+        if (openId === id && !editingInSheet()) openSheet(id);
+      } else {
+        any = true;
+        var el = $("revealLeft");
+        if (el && openId === id) el.textContent = "あと " + Math.ceil((revealed[id].until - now) / 1000) + "秒で隠れます";
+      }
+    });
+    if (!any){ clearInterval(revealTimer); revealTimer = null; }
+  }
+  function forgetSecrets(){
+    unlocked = {}; revealed = {};
+    if (openId){ var n = find(openId); if (n && n.secret) openSheet(openId); }
+  }
+  async function revealNode(n, btn){
+    btn.disabled = true; btn.textContent = "Face ID で確認しています…";
+    try {
+      var t = await openText(n.enc);
+      revealed[n.id] = { text:t, until: Date.now() + REVEAL_MS };
+      if (!revealTimer) revealTimer = setInterval(tickReveal, 1000);
+      sheetNote = null;
+    } catch(e){
+      sheetNote = { id:n.id, text: vaultMessage(e), bad:true };
+    }
+    if (openId === n.id) openSheet(n.id);
+  }
+  async function resealNode(n, text){
+    try {
+      var enc = await sealText(text), label = secretLabel(text), rv = revealed[n.id];
+      n.enc = enc; n.title = "🔒 " + titleOf(label);
+      n.materials = [{ text:label, at: ((n.materials || [])[0] || {}).at || Date.now() }];
+      if (rv){ rv.text = text; rv.until = Date.now() + REVEAL_MS; }
+      put(n);
+      sheetNote = { id:n.id, text:"隠したまま保存しました。" };
+    } catch(e){
+      sheetNote = { id:n.id, text:"保存できませんでした：" + vaultMessage(e), bad:true };
+    }
+    refreshSheet(n);
+  }
+  /* 今ある項目を隠す。材料と結論をまとめて1つの暗号文にする */
+  async function hideNode(n, auto){
+    if (!currentLock()){
+      askLock(auto ? "パスワードなど、見られたくない文字が入りました。" : "",
+        function(){ hideNode(n, auto); },
+        auto ? function(){ put(n); if (openId === n.id) openSheet(n.id); } : null,
+        auto ? function(){ put(n); if (openId === n.id) openSheet(n.id); } : null);
+      return;
+    }
+    var text = nodeText(n);
+    try {
+      var enc = await sealText(text), label = secretLabel(text);
+      var first = (n.materials || []).reduce(function(t, m){ return Math.min(t, m.at || t); }, n.createdAt || Date.now());
+      n.enc = enc; n.secret = true; n.title = "🔒 " + titleOf(label);
+      n.materials = [{ text:label, at:first }]; n.conclusion = ""; n.conclusionAt = 0; n.status = "note";
+      put(n);
+      sheetNote = { id:n.id, text: auto ? "見られたくない文字があったので、隠して保存しました。" : "隠しました。見るときは Face ID。" };
+    } catch(e){
+      if (auto) put(n);
+      sheetNote = { id:n.id, text:"隠せませんでした：" + vaultMessage(e), bad:true };
+    }
+    if (openId === n.id) refreshSheet(n);
+  }
+  function unhideNode(n){
+    var rv = revealed[n.id]; if (!rv) return;
+    if (!window.confirm("隠すのをやめて、普通のメモに戻しますか？ 中身がそのまま保存されます。")) return;
+    var at = ((n.materials || [])[0] || {}).at || Date.now();
+    n.materials = [{ text: rv.text, at:at }]; n.title = titleOf(rv.text);
+    delete n.secret; delete n.enc; delete revealed[n.id];
+    sheetNote = { id:n.id, text:"普通のメモに戻しました。" };
+    put(n); openSheet(n.id);
+  }
+  /* 詳細画面の「隠した内容」 */
+  function secretBlock(n){
+    var lab = document.createElement("p"); lab.className = "block-label"; lab.textContent = "🔒 隠した内容";
+    sheetBody.appendChild(lab);
+    var box = document.createElement("div"); box.className = "secret";
+    var rv = revealed[n.id];
+    if (rv && rv.until > Date.now()){
+      var ta = document.createElement("textarea");
+      ta.className = "mat-edit"; ta.rows = 1; ta.value = rv.text; ta.spellcheck = false;
+      ta.setAttribute("autocomplete", "off"); ta.setAttribute("autocorrect", "off"); ta.setAttribute("autocapitalize", "off");
+      ta.setAttribute("aria-label", "隠した内容（タップして直せます）");
+      box.appendChild(ta);
+      liveEdit(ta, false, function(v){ if (v !== rv.text) resealNode(n, v); }, function(){ return rv.text; });
+      ta.addEventListener("input", function(){ rv.until = Date.now() + REVEAL_MS; });
+      var foot = document.createElement("div"); foot.className = "mat-foot";
+      var left = document.createElement("time"); left.id = "revealLeft";
+      left.textContent = "あと " + Math.ceil((rv.until - Date.now()) / 1000) + "秒で隠れます";
+      foot.appendChild(left);
+      var hide = document.createElement("button"); hide.type = "button"; hide.className = "copy"; hide.textContent = "いま隠す";
+      hide.style.marginLeft = "auto";
+      hide.onclick = function(){ delete revealed[n.id]; openSheet(n.id); };
+      foot.appendChild(hide);
+      foot.appendChild(copyButton(function(){ return rv.text; }));
+      box.appendChild(foot);
+    } else {
+      var p = document.createElement("p"); p.className = "secret-mask";
+      p.textContent = ((n.materials || [])[0] || {}).text || MASK;
+      box.appendChild(p);
+      var b = document.createElement("button"); b.type = "button"; b.className = "primary"; b.textContent = "Face ID で見る";
+      b.onclick = function(){ revealNode(n, b); };
+      box.appendChild(b);
+    }
+    sheetBody.appendChild(box);
+    var act = document.createElement("div"); act.className = "sheet-actions";
+    if (rv && rv.until > Date.now()){
+      var un = document.createElement("button"); un.type = "button"; un.className = "ghost"; un.textContent = "隠すのをやめる";
+      un.onclick = function(){ unhideNode(n); };
+      act.appendChild(un);
+    }
+    addDelete(act, n); sheetBody.appendChild(act);
+  }
+  function showLockNote(){
+    var el = $("lockNote"); if (!el) return;
+    var lock = currentLock(), count = nodes.filter(function(n){ return n.secret; }).length;
+    el.textContent = !vaultSupported() ? "このブラウザでは使えません（iPhone の Safari・iOS 18 以降が必要です）。"
+      : lock ? "Face ID 登録済み（" + whenLong(lock.at) + "）。隠したメモ " + count + "件。"
+      : "まだ登録していません。パスワードっぽいものを入れると、そのときに登録を聞きます。";
+    $("lockSetup").textContent = lock ? "Face ID を登録し直す" : "Face ID を登録する";
+  }
+
   /* ============================ 投入 ============================ */
   function note(msg, cls){
     statusEl.hidden = false;
@@ -1835,7 +2233,14 @@
 
   async function capture(){
     var text = input.value.trim(); if (!text) return;
+    captureText(text, false);
+  }
+  /* openly: 「隠さずに保存」を選んだあと。見られたくない内容かどうかはもう聞かない */
+  async function captureText(text, openly){
     send.disabled = true; $("neuronBox").textContent = "";
+
+    /* パスワードなどがコードで見つかったら、Jev には送らずにその場で隠す */
+    if (!openly && detectSecret(text).hit){ await captureSecret(text, null); return; }
 
     if (!getCfg().key){
       put(rawNode(text)); input.value = ""; clearFusen();
@@ -1852,6 +2257,8 @@
       send.disabled = false; refreshRaw(); return;
     }
     refreshRaw();
+
+    if (!openly && r.secret !== null && r.secret >= 0.7){ await captureSecret(text, r); return; }
 
     var rec = r.recall;
     if (rec && rec.isRecall !== null && rec.isRecall >= 0.6){
@@ -1943,7 +2350,7 @@
     $("cfgModel").value = c.model || DEFAULT_MODEL;
     $("cfgContexts").value = CONTEXTS.filter(function(x){ return x !== "その他"; })
       .map(function(k){ return CONTEXT_HINTS[k] ? k + "：" + CONTEXT_HINTS[k] : k; }).join("\n");
-    $("probe").textContent = ""; refreshRaw(); showBackupNote();
+    $("probe").textContent = ""; refreshRaw(); showBackupNote(); showLockNote();
     cfgSheet.hidden = false;
   }
   function saveCfg(){
@@ -1975,7 +2382,9 @@
       nodes: JSON.parse(cleanJSON(nodes)),
       contexts: CONTEXTS.filter(function(x){ return x !== "その他"; }),
       contextHints: CONTEXT_HINTS,
-      aliases: aliases
+      aliases: aliases,
+      /* 隠したメモを開けるための登録。開ける鍵は Face ID でしか外せない形で包んである */
+      locks: getLocks().locks
     };
   }
   function backupName(){
@@ -2026,7 +2435,10 @@
       materials: (Array.isArray(x.materials) ? x.materials : []).filter(function(m){ return m && typeof m.text === "string"; })
         .slice(0, 200).map(function(m){ return { text: m.text.slice(0, 2000), at: num(m.at, Date.now()) }; }),
       conclusion: typeof x.conclusion === "string" ? x.conclusion.slice(0, 1000) : "",
-      conclusionAt: num(x.conclusionAt, 0)
+      conclusionAt: num(x.conclusionAt, 0),
+      secret: x.secret && x.enc && typeof x.enc.ct === "string" ? true : undefined,
+      enc: x.secret && x.enc && typeof x.enc.ct === "string"
+        ? { v:1, k:String(x.enc.k || ""), epk:x.enc.epk, iv:String(x.enc.iv || ""), ct:x.enc.ct } : undefined
     };
   }
   /* 今あるデータは消さずに足し合わせる。同じ項目は新しく更新された方を残す */
@@ -2060,6 +2472,15 @@
         Object.keys(obj.contextHints).forEach(function(k){ if (!hints[k] && typeof obj.contextHints[k] === "string") hints[k] = obj.contextHints[k].slice(0, 80); });
       c.contexts = cur; c.contextHints = hints; setCfg(c); loadContexts();
       $("cfgContexts").value = cur.map(function(k){ return hints[k] ? k + "：" + hints[k] : k; }).join("\n");
+    }
+    if (obj && obj.locks && typeof obj.locks === "object"){
+      var lk = getLocks();
+      Object.keys(obj.locks).forEach(function(k){ if (!lk.locks[k] && validLock(obj.locks[k])) lk.locks[k] = obj.locks[k]; });
+      if (!lk.current || !lk.locks[lk.current]){
+        var ks = Object.keys(lk.locks).sort(function(a, b){ return (lk.locks[b].at || 0) - (lk.locks[a].at || 0); });
+        lk.current = ks[0] || null;
+      }
+      setLocks(lk); showLockNote();
     }
     saveNodes(); render();
     $("bkPaste").value = ""; $("bkPasteBox").hidden = true;
@@ -2754,6 +3175,13 @@
   $("reclassify").addEventListener("click", reclassifyAll);
   $("findDup").addEventListener("click", checkAllDuplicates);
   $("bkSave").addEventListener("click", saveBackup);
+  $("lockSetup").addEventListener("click", function(){
+    if (currentLock() && !window.confirm("新しく登録し直します。今まで隠したメモは、前の登録のまま開けます。")) return;
+    $("lockNote").textContent = "Face ID を待っています…";
+    registerLock(function(){ note("Face ID を登録しました。"); }, null, showLockNote);
+  });
+  /* アプリを離れたら、見えている中身と開ける鍵をすぐ忘れる */
+  document.addEventListener("visibilitychange", function(){ if (document.hidden) forgetSecrets(); });
   $("bkCopy").addEventListener("click", copyBackup);
   $("bkOpen").addEventListener("click", function(){ $("bkFile").value = ""; $("bkFile").click(); });
   $("bkFile").addEventListener("change", function(){
