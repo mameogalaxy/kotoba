@@ -3183,6 +3183,7 @@
     var wrap, stage, wires, hubEl, blobs = {};
     var els = {}, links = [], expanded = {};
     var sig = "", cands = [], candKey = "", typed = "", busy = false, hubNote = "", hubCap = "", metaById = {};
+    var refreshTimer = null;
     var ready = false, laidOut = false, timer = null, rafId = null, wireUntil = 0;
     var hub = { x:0, y:0, d:0, top:0 }, lastH = 0;
 
@@ -3559,7 +3560,8 @@
 
     return {
       init: init,
-      refresh: function(){ clearTimeout(timer); timer = setTimeout(function(){ layout(true); }, 120); },
+      /* 画面の高さが変わったときの描き直し。候補の入れ替え待ち（timer）は消さない */
+      refresh: function(){ clearTimeout(refreshTimer); refreshTimer = setTimeout(function(){ layout(true); }, 120); },
       /* 入れた先の項目を見える位置に出して、一瞬光らせる */
       /* 入れた項目の場所を7秒ほど見せ続ける。そのあいだに描き直しが入っても中心へ戻らず、そこに留まる */
       flash: function(id, label){
@@ -3616,9 +3618,11 @@
   input.addEventListener("input", growInput);
   function syncClear(){ $("clearInput").hidden = !input.value; }
   input.addEventListener("input", syncClear);
+  /* ×で消したら、キーボードも閉じていつもの画面に戻す（また打つときは入力欄をタップ） */
   $("clearInput").addEventListener("click", function(){
     input.value = ""; recallState = null; clearFusen(); syncClear(); renderFusen();
-    input.focus();
+    input.blur();
+    if (view === "map") setTimeout(function(){ Mind.refresh(); }, 350);
   });
 
   /* iOS はキーボードが出ても画面の高さを変えないので、見えている高さに合わせて組み直す */
