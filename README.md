@@ -333,7 +333,7 @@ Jev の `isMaterial` / `isAnswer` には「日付や時刻が同じだけでは�
   App Store・YouTube などのリンクは iPhone ではそのアプリが開く
 - マップと一覧では、リンクのある項目の頭に 🔗 が付く。**見出しにはリンクを入れない**（リンクだけのメモは「App Store」のようにリンク先の名前になる）。前からある項目の見出しも、開いたときに直す
 - App Store のリンクは App Store の商品ページなので、それだけでは App Store が開く。番号でわからなければ、リンクの中のアプリ名か、見出しがアプリ名そのもののときはその名前で引く。YouTube・X・Instagram・LINE・TikTok・Gmail・
-  Google マップ・Spotify・Slack・Discord・Facebook・Netflix・Chrome・Notion・Threads・ChatGPT・Claude・Google は
+  Google マップ・Spotify・Slack・Discord・Facebook・Netflix・Chrome・Notion・Threads・ChatGPT・Claude・Google・PayPay・Gemini（gemini.google.com を開き、アプリがあればアプリに渡る）は
   アプリを直接開くアドレス（`youtube://` など）がわかっているので、「▶ YouTube を開く」を先に出す。アプリが入っていなければ開けない
 - 直接開くアドレスがないアプリ（ウエルシア・トモズなど）は「▶ ショートカットで開く」を出す。iPhone の「ショートカット」で
   見出しから作った名前（「ウェルシアアプリ」なら「ウェルシアを開く」）のショートカットを作り、「Appを開く」を1つ入れておけば開く

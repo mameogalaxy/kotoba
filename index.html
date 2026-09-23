@@ -1994,7 +1994,9 @@
     "585027354":["Google マップ","comgooglemaps://"], "324684580":["Spotify","spotify://"], "618783545":["Slack","slack://"],
     "985746746":["Discord","discord://"], "284882215":["Facebook","fb://"], "363590051":["Netflix","nflx://"],
     "535886823":["Chrome","googlechrome://"], "1232780281":["Notion","notion://"], "6446901002":["Threads","barcelona://"],
-    "6448311069":["ChatGPT","chatgpt://"], "6473753684":["Claude","claude://"], "284815942":["Google","google://"], "1435783608":["PayPay","paypay://"]
+    "6448311069":["ChatGPT","chatgpt://"], "6473753684":["Claude","claude://"], "284815942":["Google","google://"], "1435783608":["PayPay","paypay://"],
+    /* Gemini は専用のアドレスが公開されていないので、アプリに渡される gemini.google.com を開く */
+    "6477489729":["Gemini","https://gemini.google.com/app"]
   };
   /* 国ごとに App Store の番号が違うことがあるので、番号でわからなければリンクの前後に書いたアプリ名で引く */
   /* slug: リンクの中の名前（/app/tiktok/id… の tiktok）。title: 見出し。見出しはアプリ名で始まるときだけ使う */
@@ -2064,6 +2066,7 @@
       /* App Store のリンクで、開き方がわかっているアプリなら「アプリを開く」を先に出す */
       if (ap){
         var o = document.createElement("a"); o.className = "link app"; o.href = ap[1];
+        if (/^https?:/.test(ap[1])){ o.target = "_blank"; o.rel = "noopener noreferrer"; }
         o.textContent = "▶ " + ap[0] + " を開く";
         o.addEventListener("click", function(e){ e.stopPropagation(); });
         box.appendChild(o);
