@@ -72,6 +72,12 @@
 
   .dock{flex:none; margin:0 -16px; padding:8px 16px calc(10px + env(safe-area-inset-bottom,0px));
     background:var(--bg); border-top:1px solid var(--line)}
+  .notice{position:fixed; left:12px; right:12px; top:calc(var(--app-y, 0px) + env(safe-area-inset-top, 0px) + 10px); z-index:40;
+    max-width:620px; margin:0 auto; background:var(--bg); border:1px solid var(--accent); border-radius:14px;
+    box-shadow:var(--shadow); padding:12px 14px}
+  .notice p{margin:0 0 10px; font-size:13.5px; line-height:1.6; color:var(--ink)}
+  .notice .row{display:flex; gap:8px; flex-wrap:wrap}
+  .notice .primary, .notice .ghost{padding:7px 14px; font-size:13px}
   .wordbar{display:flex; gap:6px; overflow-x:auto; padding:0 2px 8px; scrollbar-width:none; -webkit-overflow-scrolling:touch}
   .wordbar::-webkit-scrollbar{display:none}
   .word{flex:none; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:6px 12px;
@@ -338,6 +344,8 @@
   </div>
 </div>
 
+<div class="notice" id="notice" hidden role="status" aria-live="polite"></div>
+
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-inner">
     <div class="sheet-bar">
@@ -384,6 +392,7 @@
         </p>
         <div class="sheet-actions" style="margin-top:8px">
           <button class="ghost" id="reclassify" type="button">今ある項目を振り分け直す</button>
+          <button class="ghost" id="findDup" type="button">似た枝をさがす</button>
           <span class="hint" id="reclassifyNote" style="margin:0"></span>
         </div>
       </div>
@@ -1069,7 +1078,7 @@
       var name = nameIn.value.trim();
       if (!name){ msg.textContent = "名前を入れてください。"; return; }
       if (name === "その他"){ msg.textContent = "「その他」は最初からあります。"; return; }
-      var c = getCfg(), list = CONTEXTS.filter(function(x){ return x !== "その他"; });
+      var c = getCfg(), list = CONTEXTS.filter(function(x){ return x !== "その他"; }), isNew = list.indexOf(name) < 0;
       if (list.indexOf(name) < 0){
         if (list.length >= 11){ msg.textContent = "枝は11個までです。設定で使っていない枝を消してください。"; return; }
         list.push(name);
@@ -1078,6 +1087,7 @@
       if (hintIn.value.trim()) hints[name] = hintIn.value.trim();
       c.contexts = list; c.contextHints = hints; setCfg(c); loadContexts();
       n.context = name; saveNodes(); render(); openSheet(n.id);
+      if (isNew) onBranchesAdded([name], n.id);
     };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
     [n.kind, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")]
@@ -1752,15 +1762,17 @@
     cfgSheet.hidden = false;
   }
   function saveCfg(){
-    var ctx = parseContexts($("cfgContexts").value);
-    setCfg({
-      key: $("cfgKey").value.trim(),
-      endpoint: $("cfgEndpoint").value.trim() || DEFAULT_ENDPOINT,
-      model: $("cfgModel").value.trim() || DEFAULT_MODEL,
-      contexts: ctx.names.length ? ctx.names : DEFAULT_CONTEXTS.slice(),
-      contextHints: ctx.names.length ? ctx.hints : Object.assign({}, DEFAULT_HINTS)
-    });
+    var ctx = parseContexts($("cfgContexts").value), before = branchList();
+    var c = getCfg();   /* バックアップ日時など、画面にない設定は残す */
+    c.key = $("cfgKey").value.trim();
+    c.endpoint = $("cfgEndpoint").value.trim() || DEFAULT_ENDPOINT;
+    c.model = $("cfgModel").value.trim() || DEFAULT_MODEL;
+    c.contexts = ctx.names.length ? ctx.names : DEFAULT_CONTEXTS.slice();
+    c.contextHints = ctx.names.length ? ctx.hints : Object.assign({}, DEFAULT_HINTS);
+    setCfg(c);
     loadContexts();
+    var added = branchList().filter(function(k){ return before.indexOf(k) < 0; });
+    if (added.length) onBranchesAdded(added, null);
     render();
     verified = false;
     updateEngine();
@@ -1880,6 +1892,147 @@
     var b = document.createElement("button"); b.type = "button"; b.textContent = "いま保存する";
     b.onclick = function(){ statusEl.hidden = true; openCfg(); saveBackup(); };
     statusEl.appendChild(b);
+  }
+
+  /* ============================ 枝の重複と引き寄せ ============================ */
+  function branchList(){ return CONTEXTS.filter(function(x){ return x !== "その他"; }); }
+  function branchCount(k){ return nodes.filter(function(n){ return ctxName(n.context) === k; }).length; }
+  function syncCfgContexts(){
+    var el = $("cfgContexts"); if (!el) return;
+    el.value = branchList().map(function(k){ return CONTEXT_HINTS[k] ? k + "：" + CONTEXT_HINTS[k] : k; }).join("\n");
+  }
+  function setBranches(list, hints){
+    var c = getCfg(); c.contexts = list; c.contextHints = hints; setCfg(c); loadContexts(); syncCfgContexts(); render();
+  }
+  function snapshot(){
+    var c = getCfg();
+    return { cfg: JSON.stringify({ contexts:c.contexts || null, contextHints:c.contextHints || null }),
+             ctx: nodes.map(function(n){ return [n.id, n.context]; }) };
+  }
+  function restore(snap){
+    var c = getCfg(), o = JSON.parse(snap.cfg);
+    if (o.contexts) c.contexts = o.contexts; else delete c.contexts;
+    if (o.contextHints) c.contextHints = o.contextHints; else delete c.contextHints;
+    setCfg(c); loadContexts(); syncCfgContexts();
+    var m = {}; snap.ctx.forEach(function(p){ m[p[0]] = p[1]; });
+    nodes.forEach(function(n){ if (m[n.id] !== undefined) n.context = m[n.id]; });
+    saveNodes(); render(); if (openId) openSheet(openId);
+  }
+
+  /* 画面上部に出す知らせ。順番に1つずつ出す */
+  var noticeQueue = [], noticeOpen = false;
+  function showNotice(text, buttons){ noticeQueue.push({ text:text, buttons:buttons }); if (!noticeOpen) nextNotice(); }
+  function nextNotice(){
+    var box = $("notice"), it = noticeQueue.shift();
+    if (!it){ box.hidden = true; noticeOpen = false; return; }
+    noticeOpen = true; box.textContent = "";
+    var pp = document.createElement("p"); pp.textContent = it.text; box.appendChild(pp);
+    var row = document.createElement("div"); row.className = "row";
+    it.buttons.forEach(function(bt){
+      var b = document.createElement("button"); b.type = "button";
+      b.className = bt.primary ? "primary" : "ghost"; b.textContent = bt.label;
+      /* run の中で次の知らせが出ることがあるので、そのときは閉じ直さない */
+      b.onclick = function(){ box.hidden = true; noticeOpen = false; if (bt.run) bt.run(); if (!noticeOpen) nextNotice(); };
+      row.appendChild(b);
+    });
+    box.appendChild(row); box.hidden = false;
+  }
+
+  /* 枝の組ごとに「同じものを入れる分類として重なっているか」を、1リクエストにまとめて聞く */
+  async function findDuplicates(focus){
+    var list = branchList(), pairs = [];
+    for (var i = 0; i < list.length; i++) for (var j = i + 1; j < list.length; j++)
+      if (!focus || focus.indexOf(list[i]) >= 0 || focus.indexOf(list[j]) >= 0) pairs.push([list[i], list[j]]);
+    if (!pairs.length) return [];
+    pairs = pairs.slice(0, 60);
+    var qs = {};
+    pairs.forEach(function(pr, k){
+      qs["pair" + k] = { type:"noul",
+        instructions:"「" + pr[0] + "」と「" + pr[1] + "」は、同じ種類のものを入れる分類として重なっているか（どちらか一方にまとめても困らないか）。",
+        criteria:{ "true":"ほぼ同じものが入る分類で、片方にまとめられる", "false":"入るものがはっきり違う" } };
+    });
+    var res = await jev({ 枝の一覧: list.map(function(k){ return { 名前:k, 説明: CONTEXT_HINTS[k] || "" }; }) }, qs);
+    var a = answersOf(res);
+    return pairs.map(function(pr, k){ return { a:pr[0], b:pr[1], p: asNoul(a["pair" + k]) }; })
+      .filter(function(x){ return x.p !== null && x.p >= 0.6; })
+      .sort(function(x, y){ return y.p - x.p; });
+  }
+
+  function mergeBranch(from, to){
+    var list = branchList();
+    if (list.indexOf(from) < 0 || list.indexOf(to) < 0) return;
+    var snap = snapshot(), moved = 0;
+    nodes.forEach(function(n){ if (ctxName(n.context) === from){ n.context = to; moved++; } });
+    var hints = Object.assign({}, CONTEXT_HINTS);
+    if (hints[from]){
+      hints[to] = hints[to] ? (hints[to].indexOf(hints[from]) < 0 ? (hints[to] + "、" + hints[from]).slice(0, 80) : hints[to]) : hints[from];
+    }
+    delete hints[from];
+    saveNodes();
+    setBranches(list.filter(function(k){ return k !== from; }), hints);
+    if (openId) openSheet(openId);
+    showNotice("「" + from + "」を「" + to + "」にまとめました（" + moved + "件を移動）。",
+      [{ label:"元に戻す", run:function(){ restore(snap); } }, { label:"OK", primary:true }]);
+  }
+
+  function offerMerge(d, after){
+    var ca = branchCount(d.a), cb = branchCount(d.b);
+    var big = cb >= ca ? d.b : d.a, small = big === d.a ? d.b : d.a;
+    showNotice("「" + d.a + "」と「" + d.b + "」はよく似た枝です（重なり " + Math.round(d.p * 100) + "%）。"
+      + "このままだと同じようなものが2か所に分かれてしまいます。まとめますか？",
+      [{ label:"「" + big + "」にまとめる", primary:true, run:function(){ mergeBranch(small, big); if (after) after(); } },
+       { label:"「" + small + "」にまとめる", run:function(){ mergeBranch(big, small); if (after) after(); } },
+       { label:"このまま", run: after }]);
+  }
+
+  /* 新しい枝に、過去の項目のうち「そっちの方がふさわしい」確率が高いものを移す */
+  async function pullIntoBranches(names, exceptId){
+    names = names.filter(function(k){ return branchList().indexOf(k) >= 0; });
+    if (!names.length || !getCfg().key) return;
+    var snap = snapshot(), moved = [];
+    var list = nodes.filter(function(n){ return n.id !== exceptId && names.indexOf(n.context) < 0; });
+    if (!list.length) return;
+    thinking("新しい枝「" + names.join("・") + "」に合う過去の項目を探しています…");
+    for (var i = 0; i < list.length; i++){
+      var n = list[i];
+      try {
+        var body = [n.title].concat((n.materials || []).slice(0, 3).map(function(m){ return m.text; })).join("\n").slice(0, 800);
+        var res = await jev({ 断片: body }, { context: { type:"choice",
+          instructions:"この断片の内容そのものが、どの分類の説明に最もよく当てはまるかを選ぶ。",
+          criteria: contextCriteria() } });
+        var a = answersOf(res).context, c = asChoice(a), dd = asDist(a);
+        var p = dd && typeof dd[c] === "number" ? dd[c] : asConf(a);
+        if (c && names.indexOf(c) >= 0 && p !== null && p >= 0.6){ moved.push({ n:n, p:p }); n.context = c; }
+      } catch(e){ if (e.code === "cors" || e.code === "no_key") break; }
+    }
+    statusEl.hidden = true;
+    if (!moved.length) return;
+    saveNodes(); render(); if (openId) openSheet(openId);
+    var ex = moved.slice(0, 3).map(function(x){ return "「" + x.n.title.slice(0, 14) + (x.n.title.length > 14 ? "…" : "") + "」"; }).join("");
+    showNotice("新しい枝「" + names.join("・") + "」の方がふさわしい過去の項目を " + moved.length + "件移しました：" + ex + (moved.length > 3 ? " ほか" : "") + "。",
+      [{ label:"元に戻す", run:function(){ restore(snap); } }, { label:"OK", primary:true }]);
+    if (!openId) Mind.flash(moved[0].n.id, ctxName(moved[0].n.context) + " に移しました");
+  }
+
+  async function onBranchesAdded(names, exceptId){
+    if (!getCfg().key || !names.length) return;
+    var dups = [];
+    try { dups = await findDuplicates(names); } catch(e){}
+    var pull = function(){ pullIntoBranches(names, exceptId); };
+    if (!dups.length){ pull(); return; }
+    offerMerge(dups[0], pull);
+  }
+
+  async function checkAllDuplicates(){
+    var btn = $("findDup");
+    if (!getCfg().key){ showNotice("先にAPIキーを入れてください。", [{ label:"OK", primary:true }]); return; }
+    btn.disabled = true; btn.textContent = "さがしています…";
+    var dups = [];
+    try { dups = await findDuplicates(null); }
+    catch(e){ showNotice("調べられませんでした（" + (e.message || "通信エラー") + "）。", [{ label:"OK", primary:true }]); }
+    btn.disabled = false; btn.textContent = "似た枝をさがす";
+    if (!dups.length){ showNotice("似ている枝は見つかりませんでした。", [{ label:"OK", primary:true }]); return; }
+    dups.forEach(function(d){ offerMerge(d, null); });
   }
 
   var reclassifying = false;
@@ -2404,6 +2557,7 @@
   $("viewToggle").addEventListener("click", function(){ setView(view === "map" ? "list" : "map"); });
   $("cfgTest").addEventListener("click", probe);
   $("reclassify").addEventListener("click", reclassifyAll);
+  $("findDup").addEventListener("click", checkAllDuplicates);
   $("bkSave").addEventListener("click", saveBackup);
   $("bkCopy").addEventListener("click", copyBackup);
   $("bkOpen").addEventListener("click", function(){ $("bkFile").value = ""; $("bkFile").click(); });
