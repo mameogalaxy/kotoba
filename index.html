@@ -908,10 +908,86 @@
   }
   function baseScore(n){ return Math.round(((Number(n.importance)||3)/5) * freshWeight(n) * 100); }
   /* Jev が「今日に関係する」「忘れると困る」と判定した分だけ、中心へ引き寄せる */
+  /* 書いてある日付は計算で読む（Jev に任せると「24日」を今日と取り違えることがあった）。
+     基準は、その項目を書いた日 */
+  function startOfDay(ts){ var d = new Date(ts); d.setHours(0,0,0,0); return d.getTime(); }
+  function dueOf(n){
+    var key = (n.updatedAt || 0) + "|" + dayKey();
+    if (n._dueKey !== key){ n._due = computeDue(n); n._dueKey = key; }
+    return n._due;
+  }
+  function computeDue(n){
+    var text = [n.title].concat((n.materials || []).map(function(m){ return m.text; })).join("\n");
+    var bd = new Date(startOfDay(n.createdAt || n.updatedAt || Date.now())), base = bd.getTime(), out = [], m, re;
+    function days(k){ var d = new Date(base); d.setDate(d.getDate() + k); return d.getTime(); }
+    function kindAfter(idx){ return /^\s*(まで|迄|締め?切り?|〆)/.test(text.slice(idx, idx + 6)) ? "deadline" : "day"; }
+    if (/今日|本日|今朝|今夜|今晩/.test(text)) out.push({ at:base, kind:"day" });
+    if (/明後日|あさって/.test(text)) out.push({ at:days(2), kind:"day" });
+    else if (/明日|あした/.test(text)) out.push({ at:days(1), kind:"day" });
+    re = /(\d{1,2})\s*[\/月]\s*(\d{1,2})\s*日?/g;
+    while ((m = re.exec(text))){
+      var mo = +m[1], da = +m[2]; if (mo < 1 || mo > 12 || da < 1 || da > 31) continue;
+      var d1 = new Date(bd); d1.setMonth(mo - 1, da);
+      if (d1.getTime() < base - 60 * DAY) d1.setFullYear(d1.getFullYear() + 1);
+      out.push({ at:d1.getTime(), kind:kindAfter(re.lastIndex) });
+    }
+    re = /(^|[^\d月\/])(\d{1,2})日(?![前間後])/g;
+    while ((m = re.exec(text))){
+      var da2 = +m[2]; if (da2 < 1 || da2 > 31) continue;
+      var d2 = new Date(bd); d2.setDate(da2);
+      if (d2.getTime() < base) d2.setMonth(d2.getMonth() + 1);
+      out.push({ at:d2.getTime(), kind:kindAfter(re.lastIndex) });
+    }
+    re = /(\d{1,3})日後/g;
+    while ((m = re.exec(text))) out.push({ at:days(+m[1]), kind:"day" });
+    re = /(来週)?の?([月火水木金土日])曜/g;
+    while ((m = re.exec(text))){
+      var wd = "日月火水木金土".indexOf(m[2]), cur = bd.getDay();
+      var diff = m[1] ? (7 - ((cur + 6) % 7)) + ((wd + 6) % 7) : (wd - cur + 7) % 7;
+      out.push({ at:days(diff), kind:"day" });
+    }
+    re = /(\d{1,2})月\s*(まで|中|末|いっぱい)/g;
+    while ((m = re.exec(text))){
+      var mo3 = +m[1]; if (mo3 < 1 || mo3 > 12) continue;
+      var d3 = new Date(bd); d3.setMonth(mo3, 0);
+      if (d3.getTime() < base - 60 * DAY) d3.setFullYear(d3.getFullYear() + 1);
+      out.push({ at:d3.getTime(), kind:"deadline" });
+    }
+    if (/月末/.test(text)){ var d4 = new Date(bd); d4.setMonth(d4.getMonth() + 1, 0); out.push({ at:d4.getTime(), kind:"deadline" }); }
+    if (!out.length) return null;
+    var today = startOfDay(Date.now());
+    var fut = out.filter(function(x){ return x.at >= today; }).sort(function(x, y){ return x.at - y.at; });
+    var pick = fut[0] || out.sort(function(x, y){ return y.at - x.at; })[0];
+    return { at:pick.at, kind:pick.kind, days: Math.round((pick.at - today) / DAY) };
+  }
+
+  /* Jev の判定（今日に関係するか・忘れると困るか）と、書いてある期日を合わせる */
+  function todayInfo(n){
+    if (n.status === "done") return null;
+    var j = todayOf(n), due = dueOf(n);
+    if (!j && !due) return null;
+    var t = j ? j.t : 0, r = j ? j.r : 0, tag = "", near = 0;
+    if (due){
+      var d = due.days;
+      if (due.kind === "deadline"){
+        if (d < 0) t = Math.min(t, 0.1);
+        else if (d === 0){ t = Math.max(t, 0.9); tag = "今日まで"; }
+        else if (d <= 3){ t = Math.min(t, 0.3); tag = "あと" + d + "日"; near = 18; }
+      } else {
+        if (d < 0) t = Math.min(t, 0.05);
+        else if (d === 0) t = Math.max(t, 0.95);
+        else if (d === 1){ t = Math.min(t, 0.25); tag = "明日"; near = 25; }
+        else if (d <= 6){ t = Math.min(t, 0.12); tag = "あと" + d + "日"; near = 10; }
+        else t = Math.min(t, 0.08);
+      }
+    }
+    if (!tag){ if (t >= 0.6) tag = "今日"; else if (r >= 0.75) tag = "忘れずに"; }
+    return { t:t, r:r, tag:tag, near:near, due:due };
+  }
+  /* Jev と期日の判定の分だけ、中心へ引き寄せる */
   function todayBoost(n){
-    if (n.status === "done") return 0;
-    var j = todayOf(n); if (!j) return 0;
-    return Math.round(55 * (j.t || 0) + 35 * (j.r || 0));
+    var i = todayInfo(n); if (!i) return 0;
+    return Math.round(55 * i.t + 35 * i.r + i.near);
   }
   function nowScore(n){ return Math.min(100, baseScore(n) + todayBoost(n)); }
 
@@ -926,18 +1002,14 @@
     var c = todayCache.items[n.id];
     return (c && c.u === (n.updatedAt || 0)) ? c : null;
   }
-  function todayTag(n){
-    var j = todayOf(n); if (!j || n.status === "done") return "";
-    if (j.t >= 0.6) return "今日";
-    if (j.r >= 0.75) return "忘れずに";
-    return "";
-  }
+  function todayTag(n){ var i = todayInfo(n); return i ? i.tag : ""; }
   var todayState = null, todayDismissed = false, todayShownAt = 0, todayBusy = false;
 
   /* 1つの一覧に項目を並べ、項目ごとに2問（今日に関係するか・忘れると困るか）をまとめて聞く。
      まだ判定していない項目と、直した項目だけを聞く */
   async function judgeToday(){
-    if (todayBusy || !getCfg().key) return;
+    if (todayBusy) return;
+    if (!getCfg().key){ pinToday(); return; }   /* キーがなくても、書いてある期日の分は出す */
     var dk = dayKey();
     if (todayCache.date !== dk) todayCache = { date:dk, items:{} };
     var need = nodes.filter(function(n){ return n.status !== "done" && !todayOf(n); })
@@ -950,6 +1022,8 @@
       var items = chunk.map(function(n, k){
         var body = (n.materials || []).map(function(m){ return m.text; }).join(" ").replace(/\s+/g, " ");
         var it = { 番号:"i" + k, 見出し:n.title, 書いた日: when(n.createdAt || n.updatedAt, true) };
+        var du = dueOf(n);
+        if (du) it.期日 = when(du.at).split(" ")[0] + (du.kind === "deadline" ? "まで" : "");
         if (body && body !== n.title) it.抜粋 = body.slice(0, 80);
         qs["today" + k] = { type:"noul",
           instructions:"項目 i" + k + "「" + n.title.slice(0, 40) + "」は、今日（" + todayLabel + "）に関係するか。今日やること・今日が期日・今日の予定・今日のうちに確認すべきことなら true。",
@@ -980,11 +1054,18 @@
 
   /* 開いた直後は、今日のことを中心に集めて見せる（打ち始めるか中心をタップすると通常表示） */
   function pinToday(){
-    var list = nodes.map(function(n){ return { n:n, j:todayOf(n) }; })
-      .filter(function(x){ return x.j && x.n.status !== "done" && (x.j.t >= 0.6 || x.j.r >= 0.85); })
-      .sort(function(a, b){ return (b.j.t * 0.7 + b.j.r * 0.3) - (a.j.t * 0.7 + a.j.r * 0.3); })
+    function rankOf(i){ return i.t * 0.7 + i.r * 0.3 + i.near / 100; }
+    var list = nodes.map(function(n){ return { n:n, i:todayInfo(n) }; })
+      .filter(function(x){ var i = x.i; return i && (i.t >= 0.6 || i.r >= 0.85 || i.tag === "今日まで" || (i.tag === "明日" && i.r >= 0.5)); })
+      .sort(function(a, b){ return rankOf(b.i) - rankOf(a.i); })
       .slice(0, 4);
-    todayState = list.length ? { picked: list.map(function(x){ return { n:x.n, why:"", ts:0, tag: (x.j.t >= 0.6 ? "今日 " + Math.round(x.j.t * 100) + "%" : "忘れずに " + Math.round(x.j.r * 100) + "%") }; }) } : null;
+    todayState = list.length ? { picked: list.map(function(x){
+      var i = x.i, label;
+      if (i.t >= 0.6) label = "今日 " + Math.round(i.t * 100) + "%";
+      else if (i.tag && i.tag !== "忘れずに") label = i.tag + (i.r >= 0.5 ? " · 忘れずに" : "");
+      else label = "忘れずに " + Math.round(i.r * 100) + "%";
+      return { n:x.n, why:"", ts:0, tag:label };
+    }) } : null;
     if (!todayDismissed && !input.value.trim() && !recallState) renderFusen();
   }
   function isStale(n){
@@ -1171,10 +1252,12 @@
       if (isNew) onBranchesAdded([name], n.id);
     };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
-    var tj = todayOf(n), extra = [];
-    if (tj && n.status !== "done"){
-      if (tj.t >= 0.3) extra.push("今日 " + Math.round(tj.t * 100) + "%");
-      if (tj.r >= 0.5) extra.push("忘れると困る " + Math.round(tj.r * 100) + "%");
+    var ti = todayInfo(n), extra = [];
+    if (ti){
+      if (ti.due) extra.push("期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
+        + (ti.due.days === 0 ? " · 今日" : ti.due.days < 0 ? " · 過ぎた" : " · " + (ti.due.days === 1 ? "明日" : "あと" + ti.due.days + "日")));
+      if (ti.t >= 0.3 && !(ti.due && ti.due.days !== 0)) extra.push("今日 " + Math.round(ti.t * 100) + "%");
+      if (ti.r >= 0.5) extra.push("忘れると困る " + Math.round(ti.r * 100) + "%");
     }
     extra.concat([n.kind, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")])
       .forEach(function(t){ var c=document.createElement("span"); c.className="chip"; c.textContent=t; kv.appendChild(c); });
@@ -1486,7 +1569,7 @@
       if (!text && recallState){ showPicked(recallState.picked, recallState.text, recallState.note); return; }
       if (!text && todayState && !todayDismissed){
         var d0 = new Date();
-        showPicked(todayState.picked, (d0.getMonth()+1) + "/" + d0.getDate() + "（" + DOW[d0.getDay()] + "）", "忘れずに", "今日のこと");
+        showPicked(todayState.picked, (d0.getMonth()+1) + "/" + d0.getDate() + "（" + DOW[d0.getDay()] + "）", "タップで戻る", "今日のこと");
         todayShownAt = Date.now();
         return;
       }
@@ -2229,7 +2312,7 @@
 
     function renderHub(){
       var open = nodes.filter(function(n){ return n.status === "open"; }).length;
-      var nToday = nodes.filter(function(n){ return todayTag(n) === "今日"; }).length;
+      var nToday = todayState ? todayState.picked.length : 0;
       var key = typed + "|" + cands.length + "|" + busy + "|" + hubNote + "|" + hubCap + "|" + nodes.length + "|" + open + "|" + nToday;
       if (hubEl._key === key) return;
       hubEl._key = key;
@@ -2259,7 +2342,7 @@
         var s2 = document.createElement("div"); s2.className = "hub-sub";
         var dt = new Date();
         s2.textContent = nodes.length
-          ? (nToday ? "今日のこと " + nToday + "件 · " : "宙ぶらりん " + open + "件 · ") + (dt.getMonth()+1) + "/" + dt.getDate()
+          ? (nToday ? "今日のこと " + nToday + "件 · タップで表示" : "宙ぶらりん " + open + "件 · " + (dt.getMonth()+1) + "/" + dt.getDate())
           : "放り込むと、ここから枝が伸びます";
         inn.appendChild(s2);
       }
@@ -2518,8 +2601,13 @@
           if (b.dataset.cat){ expanded[b.dataset.cat] = !expanded[b.dataset.cat]; layout(true); return; }
         }
         if (e.target.closest(".hub")){
-          if (recallState){ recallState = null; renderFusen(); }
-          else if (todayState && !todayDismissed){ todayDismissed = true; renderFusen(); }
+          if (recallState){ recallState = null; renderFusen(); return; }
+          if (!input.value.trim()){
+            /* 通常の表示 ⇄ 今日のこと */
+            if (todayState){ todayDismissed = !todayDismissed; if (!todayDismissed) todayShownAt = Date.now(); renderFusen(); }
+            else note(todayBusy ? "今日のことを Jev が判定しています…" : "今日のことは見つかりませんでした。");
+            return;
+          }
           input.focus();
         }
       });
