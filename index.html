@@ -619,6 +619,18 @@
     var list = (Array.isArray(c.contexts) && c.contexts.length) ? c.contexts.slice(0, MAX_BRANCHES) : DEFAULT_CONTEXTS.slice();
     CONTEXTS = list.concat(["その他"]);
     CONTEXT_HINTS = (c.contextHints && typeof c.contextHints === "object") ? c.contextHints : Object.assign({}, DEFAULT_HINTS);
+    /* 枝の色は枝ごとに覚える。ほかの枝を消しても色がずれない。新しい枝には、今使っていない色を割り当てる */
+    var map = (c.branchColors && typeof c.branchColors === "object") ? c.branchColors : {}, used = {}, changed = !c.branchColors;
+    list.forEach(function(k, i){
+      var ci = map[k];
+      if (typeof ci !== "number" || used[ci]){
+        if (!c.branchColors && !used[i]) ci = i;          /* 初めてのときは今までの並び順の色のまま */
+        else { ci = 0; while (used[ci] && ci < 400) ci++; }
+        map[k] = ci; changed = true;
+      }
+      used[map[k]] = 1;
+    });
+    if (changed){ c.branchColors = map; setCfg(c); }
   }
   function contextCriteria(){
     var o = {};
@@ -1600,7 +1612,7 @@
       if (isStale(n)) bits.push("結論が古い");
       var mt = document.createElement("span"); mt.textContent = bits.join(" · ");
       sub.appendChild(mt); li.appendChild(sub);
-      var nl = nodeLinks(n); if (nl.length) li.appendChild(linkRow(nl.slice(0, 2)));
+      var nl = nodeLinks(n); if (nl.length) li.appendChild(linkRow(nl.slice(0, 2), n.title));
       listEl.appendChild(li);
     });
 
@@ -1636,7 +1648,7 @@
       });
     }, function(){ return n.title; });
     var lk = nodeLinks(n);
-    if (lk.length) sheetBody.appendChild(linkRow(lk));
+    if (lk.length) sheetBody.appendChild(linkRow(lk, n.title));
     if (sheetNote && sheetNote.id === n.id){
       var sn = document.createElement("p"); sn.id = "sheetNoteEl"; sn.className = "sheet-note" + (sheetNote.bad ? " bad" : "");
       if (sheetNote.busy){ var pl = document.createElement("span"); pl.className = "pulse"; sn.appendChild(pl); }
@@ -1658,7 +1670,7 @@
       var b = document.createElement("button"); b.type = "button";
       b.className = "chip" + (k === curCtx ? " on" : ""); b.textContent = k;
       b.onclick = function(){
-        n.context = k; saveNodes(); render();
+        n.context = k; n.ctxLocked = true; saveNodes(); render();
         ctxBtn.textContent = k + " ▾"; picker.hidden = true;
         Array.prototype.forEach.call(picker.children, function(x){ x.classList.toggle("on", x === b); });
       };
@@ -1686,7 +1698,7 @@
       var hints = Object.assign({}, CONTEXT_HINTS);
       if (hintIn.value.trim()) hints[name] = hintIn.value.trim();
       c.contexts = list; c.contextHints = hints; setCfg(c); loadContexts();
-      n.context = name; saveNodes(); render(); openSheet(n.id);
+      n.context = name; n.ctxLocked = true; saveNodes(); render(); openSheet(n.id);
       if (isNew) onBranchesAdded([name], n.id);
     };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
@@ -1973,15 +1985,30 @@
   /* App Store の番号 → アプリを直接開くアドレス。アプリが入っていれば、アイコンをタップしたのと同じように開く */
   var APP_SCHEMES = {
     "544007664":["YouTube","youtube://"], "333903271":["X","twitter://"], "389801252":["Instagram","instagram://"],
-    "443904275":["LINE","line://"], "835599320":["TikTok","snssdk1233://"], "422689480":["Gmail","googlegmail://"],
+    "443904275":["LINE","line://"], "835599320":["TikTok","snssdk1233://"], "1235601864":["TikTok","snssdk1233://"], "422689480":["Gmail","googlegmail://"],
     "585027354":["Google マップ","comgooglemaps://"], "324684580":["Spotify","spotify://"], "618783545":["Slack","slack://"],
     "985746746":["Discord","discord://"], "284882215":["Facebook","fb://"], "363590051":["Netflix","nflx://"],
     "535886823":["Chrome","googlechrome://"], "1232780281":["Notion","notion://"], "6446901002":["Threads","barcelona://"],
     "6448311069":["ChatGPT","chatgpt://"], "6473753684":["Claude","claude://"], "284815942":["Google","google://"]
   };
-  function appOf(x){
+  /* 国ごとに App Store の番号が違うことがあるので、番号でわからなければリンクの前後に書いたアプリ名で引く */
+  /* slug: リンクの中の名前（/app/tiktok/id… の tiktok）。title: 見出し。見出しはアプリ名で始まるときだけ使う */
+  function appByName(slug, title){
+    var sl = String(slug || "").toLowerCase().replace(/[\s\-_]+/g, ""), tt = String(title || "").toLowerCase().replace(/^[🔗\s]+/, "").replace(/\s+/g, ""), best = null;
+    Object.keys(APP_SCHEMES).forEach(function(k){
+      var nm = APP_SCHEMES[k][0].toLowerCase().replace(/\s+/g, "");
+      if (nm.length < 2) return;
+      var hit = (sl && sl.indexOf(nm) === 0) || tt === nm || tt === nm + "アプリ" || tt === nm + "app";
+      if (hit && (!best || nm.length > best[0].replace(/\s+/g, "").length)) best = APP_SCHEMES[k];
+    });
+    return best;
+  }
+  function appOf(x, context){
     if (/^https?:$/.test(x.protocol) && /(^|\.)apps\.apple\.com$/.test(x.hostname)){
-      var m = x.pathname.match(/id(\d{6,12})/); return m && APP_SCHEMES[m[1]] ? APP_SCHEMES[m[1]] : null;
+      var m = x.pathname.match(/id(\d{6,12})/);
+      if (m && APP_SCHEMES[m[1]]) return APP_SCHEMES[m[1]];
+      var slug = decodeURIComponent((x.pathname.match(/\/app\/([^\/]+)\/id/) || [])[1] || "");
+      return appByName(slug, context);
     }
     return null;
   }
@@ -2009,10 +2036,10 @@
     return s.length > 42 ? s.slice(0, 42) + "…" : s;
   }
   /* 押すと別のタブで開く。App Store のリンクは iPhone では App Store アプリが開く */
-  function linkRow(links){
+  function linkRow(links, context){
     var box = document.createElement("div"); box.className = "links";
     links.forEach(function(x){
-      var web = /^https?:$/.test(x.protocol), ap = appOf(x);
+      var web = /^https?:$/.test(x.protocol), ap = appOf(x, context);
       /* App Store のリンクで、開き方がわかっているアプリなら「アプリを開く」を先に出す */
       if (ap){
         var o = document.createElement("a"); o.className = "link app"; o.href = ap[1];
@@ -2046,7 +2073,7 @@
     var imp = asScore(a.importance, IMP_LEVELS), fr = asScore(a.freshness, FRESH_LEVELS);
     if (kind && KINDS.indexOf(kind) >= 0) n.kind = kind;
     fixKind(n);
-    if (ctx && CONTEXTS.indexOf(ctx) >= 0) n.context = ctx;
+    if (ctx && CONTEXTS.indexOf(ctx) >= 0 && !(n.ctxLocked && CONTEXTS.indexOf(n.context) >= 0)) n.context = ctx;
     if (imp !== null) n.importance = Math.min(5, Math.max(1, Math.round(imp) + 1));
     if (fr !== null) n.freshness = FRESH_LEVELS[Math.min(FRESH_LEVELS.length - 1, Math.max(0, Math.round(fr)))];
     if (n.status !== "done" && un !== null) n.status = un >= 0.5 ? "open" : "note";
@@ -2715,7 +2742,7 @@
       var n = await makeSecretNode(text, r);
       /* コードで見つけたときは Jev に何も送っていないので、●にした見出しだけで枝を決める */
       if (!r && getCfg().key){ try { await reclassifyNode(n); } catch(e){} n.status = "note"; }
-      if (ctx) n.context = ctx;
+      if (ctx){ n.context = ctx; n.ctxLocked = true; }
       await saveNew(n, function(t, how){
         if (!quiet) noteLanded(t, how === "replaced" ? "前の「" + t.title + "」を新しい内容に置き換えました（隠したまま）。"
           : "見られたくない内容っぽいので、隠して " + ctxName(t.context) + " に入れました。見るときは Face ID。");
@@ -2942,7 +2969,7 @@
         fs.forEach(function(f){ fr.appendChild(copyButton(function(){ return f.value; }, f.label + "をコピー")); });
         box.appendChild(fr);
       }
-      var rl = linksIn(rv.text); if (rl.length) box.appendChild(linkRow(rl));
+      var rl = linksIn(rv.text); if (rl.length) box.appendChild(linkRow(rl, rv.text.split("\n")[0]));
     } else {
       var p = document.createElement("p"); p.className = "secret-mask";
       p.textContent = ((n.materials || [])[0] || {}).text || MASK;
@@ -3042,7 +3069,7 @@
     if (blocks0.length > 1){ await captureMany(blocks0, text, ctx); return; }
 
     if (!getCfg().key){
-      var raw0 = rawNode(text); if (ctx) raw0.context = ctx;
+      var raw0 = rawNode(text); if (ctx){ raw0.context = ctx; raw0.ctxLocked = true; }
       saveNew(raw0); input.value = ""; clearFusen();
       noteWithSettings("APIキーが未設定なので、メモとして入れました。");
       send.disabled = false; return;
@@ -3052,7 +3079,7 @@
     var r;
     try { r = await classify(text); }
     catch(e){
-      var raw1 = rawNode(text); if (ctx) raw1.context = ctx;
+      var raw1 = rawNode(text); if (ctx){ raw1.context = ctx; raw1.ctxLocked = true; }
       saveNew(raw1); input.value = ""; clearFusen();
       noteWithSettings((e.code === "cors" ? "ブラウザから直接叩けませんでした。" : (e.message || "仕分けに失敗しました。")) + " メモとして入れました。");
       send.disabled = false; refreshRaw(); return;
@@ -3123,6 +3150,7 @@
         Mind.flash(t.id, ctxName(t.context) + " に入りました");
         var cd = asDist(r.raw && r.raw.context), cp = cd && typeof cd[r.context] === "number" ? cd[r.context] : null;
         if (!r.forceCtx && (ctxName(t.context) === "その他" || (cp !== null && cp < 0.3))) suggestBranch(t, text);
+        if (r.forceCtx && t.context === r.forceCtx && !t.ctxLocked){ t.ctxLocked = true; saveNodes(); }
         if (isQ){ currentTab = "open"; syncTabs(); render(); }
       });
     }
@@ -3257,6 +3285,7 @@
       repeat: validRepeat(x.repeat) || undefined,
       doneOn: typeof x.doneOn === "string" ? x.doneOn.slice(0, 12) : undefined,
       notToday: x.notToday ? true : undefined,
+      ctxLocked: x.ctxLocked ? true : undefined,
       secret: x.secret && x.enc && typeof x.enc.ct === "string" ? true : undefined,
       enc: x.secret && x.enc && typeof x.enc.ct === "string"
         ? { v:1, k:String(x.enc.k || ""), epk:x.enc.epk, iv:String(x.enc.iv || ""), ct:x.enc.ct } : undefined
@@ -3370,7 +3399,7 @@
       showNotice("「" + n.title + "」は今の枝にうまく当てはまらなかったので「" + ctxName(n.context) + "」に入れました。新しい枝「" + pick + "」を作りますか？", [
         { label:"「" + pick + "」を作って入れる", primary:true, run: function(){
           var err = addBranch(pick); if (err && err !== "exists"){ note(err, "bad"); return; }
-          n.context = pick; put(n); Mind.flash(n.id, pick + " に入りました");
+          n.context = pick; n.ctxLocked = true; put(n); Mind.flash(n.id, pick + " に入りました");
           if (err !== "exists") onBranchesAdded([pick], n.id);
         } },
         { label:"名前を変えて作る", run: function(){ branchFormFor = pick; openSheet(n.id); } },
@@ -3397,7 +3426,7 @@
     c.appendChild(head);
     var h = document.createElement("h3"); h.textContent = n.title || "(無題)"; c.appendChild(h);
     var w = document.createElement("p"); w.className = "br-when"; w.textContent = "書いた日 " + whenLong(n.createdAt || n.updatedAt); c.appendChild(w);
-    var lk = nodeLinks(n); if (lk.length) c.appendChild(linkRow(lk));
+    var lk = nodeLinks(n); if (lk.length) c.appendChild(linkRow(lk, n.title));
     var mats = (n.materials || []).slice().sort(function(a, b){ return a.at - b.at; });
     mats.forEach(function(m){
       if (!n.secret && m.text === n.title && mats.length === 1) return;
@@ -3476,7 +3505,7 @@
           if (c && CONTEXTS.indexOf(c) >= 0) to = c;
         } catch(e){ if (e.code === "cors" || e.code === "no_key") key = ""; }
       }
-      n.context = to; counts[to] = (counts[to] || 0) + 1;
+      n.context = to; delete n.ctxLocked; counts[to] = (counts[to] || 0) + 1;
     }
     saveNodes(); render(); statusEl.hidden = true;
     var sum = Object.keys(counts).map(function(k){ return k + " " + counts[k] + "件"; }).join("・");
@@ -3582,7 +3611,7 @@
     names = names.filter(function(k){ return branchList().indexOf(k) >= 0; });
     if (!names.length || !getCfg().key) return;
     var snap = snapshot(), moved = [];
-    var list = nodes.filter(function(n){ return n.id !== exceptId && names.indexOf(n.context) < 0; });
+    var list = nodes.filter(function(n){ return n.id !== exceptId && names.indexOf(n.context) < 0 && !(n.ctxLocked && CONTEXTS.indexOf(n.context) >= 0); });
     if (!list.length) return;
     thinking("新しい枝「" + names.join("・") + "」に合う過去の項目を探しています…");
     for (var i = 0; i < list.length; i++){
@@ -3634,7 +3663,7 @@
     var noteEl = $("reclassifyNote"), btn = $("reclassify");
     if (!getCfg().key){ noteEl.textContent = "先にAPIキーを入れてください。"; return; }
     reclassifying = true; btn.disabled = true;
-    var list = nodes.slice(), moved = 0, failed = 0;
+    var list = nodes.filter(function(n){ return !(n.ctxLocked && CONTEXTS.indexOf(n.context) >= 0); }), moved = 0, failed = 0;
     for (var i = 0; i < list.length; i++){
       var n = list[i];
       noteEl.textContent = "振り分け直しています " + (i + 1) + " / " + list.length;
@@ -3688,7 +3717,9 @@
   var Mind = (function(){
     function colorOf(name){
       var i = CONTEXTS.indexOf(name);
-      return (name === "その他" || i < 0) ? "#8b95a3" : BRANCH_COLORS[i % BRANCH_COLORS.length];
+      if (name === "その他" || i < 0) return "#8b95a3";
+      var ci = (getCfg().branchColors || {})[name];
+      return BRANCH_COLORS[(typeof ci === "number" ? ci : i) % BRANCH_COLORS.length];
     }
     var SVGNS = "http://www.w3.org/2000/svg";
     var BLOB = "M112 8C160 14 196 52 192 104C188 150 158 186 108 192C58 198 14 168 8 116C2 64 40 20 88 10C96 8 104 7 112 8Z";
