@@ -1011,7 +1011,10 @@
   /* 「毎週月曜」「毎月25日」「平日 9時」などをコードで読む。読めないときだけ Jev に選ばせる（n.repeat）。
      その日になったら今日のことに入れ、前の日は「明日」として寄せる */
   var DOWS = "日月火水木金土";
-  var REPEAT_CUE = /毎|ごと|おき|隔週|平日|週末|定期|繰り返|every|daily|weekly|monthly/i;
+  var REPEAT_CUE = /毎|ごと|おき|隔週|平日|週末|定期|繰り返|every|daily|weekly|monthly|誕生日|お誕生|バースデー|birthday|記念日|命日|周年|生まれ/i;
+  /* 誕生日・記念日・命日は「毎年」と書かなくても毎年のこととして読む */
+  var ANNUAL = /誕生日|お誕生|バースデー|birthday|記念日|命日|周年|生まれ/i;
+  function annualKind(t){ return /誕生|バースデー|birthday|生まれ/i.test(t) ? "歳" : /命日/.test(t) ? "年" : "周年"; }
   function zen2han(t){ return String(t || "").replace(/[０-９]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }); }
   function parseClock(t){
     var m = t.match(/(午前|午後|朝|昼|夕方|夜|晩)?\s*(\d{1,2})\s*(?:時|[:：](?=\d))\s*(半|(\d{1,2})\s*分?)?/);
@@ -1047,6 +1050,16 @@
     var t = zen2han(text).replace(/[ \t　]+/g, " "), m, r = null;
     if (!REPEAT_CUE.test(t)) return null;
     var nums = { "一":1, "二":2, "三":3, "四":4, "五":5 };
+    if (ANNUAL.test(t) && !/毎月|毎週/.test(t)){
+      var ym = t.match(/(\d{4})\s*[\/年.\-]\s*(\d{1,2})\s*[\/月.\-]\s*(\d{1,2})/), md = ym ? null : t.match(/(\d{1,2})\s*[\/月]\s*(\d{1,2})/);
+      var mo = ym ? +ym[2] : md ? +md[1] : 0, da = ym ? +ym[3] : md ? +md[2] : 0;
+      if (mo >= 1 && mo <= 12 && da >= 1 && da <= 31){
+        r = { kind:"yearly", month:mo, day:da, anniv: annualKind(t) };
+        if (ym && +ym[1] > 1900) r.year = +ym[1];
+        var ck = parseClock(t.replace(/(\d{4})\s*[\/年.\-]\s*\d{1,2}\s*[\/月.\-]\s*\d{1,2}日?/, "")); if (ck) r.time = ck;
+        return r;
+      }
+    }
     if (/毎月末|月末(?:ごと|毎|に毎回)|毎月最終日/.test(t)) r = { kind:"monthEnd" };
     else if ((m = t.match(/毎月\s*(?:の\s*)?第\s*([1-5一二三四五])\s*(?:週)?\s*の?\s*([月火水木金土日])曜/)))
       r = { kind:"nth", nth: nums[m[1]] || +m[1], dow: DOWS.indexOf(m[2]) };
@@ -1056,6 +1069,7 @@
     }
     else if ((m = t.match(/毎年\s*(\d{1,2})\s*[月\/]\s*(\d{1,2})/)) && +m[1] >= 1 && +m[1] <= 12)
       r = { kind:"yearly", month:+m[1], day:+m[2] };
+    else if (ANNUAL.test(t)) return null;
     else if ((m = t.match(/毎([月火水木金土日])曜/))) r = { kind:"weekly", dows:[DOWS.indexOf(m[1])] };
     else if (/隔週|2週間?(?:ごと|おき|に1回|に一回)/.test(t)){
       var bd = dowsAfter((t.match(/(?:隔週|2週間?(?:ごと|おき|に1回|に一回))\s*(?:の)?(.*)/) || [])[1] || "");
@@ -1086,7 +1100,9 @@
       case "monthly": return r.days.some(function(x){ return x === date || (x > last && date === last); });
       case "monthEnd": return date === last;
       case "nth": return dow === r.dow && Math.ceil(date / 7) === r.nth;
-      case "yearly": return d.getMonth() + 1 === r.month && date === r.day;
+      case "yearly":
+        if (d.getMonth() + 1 !== r.month) return false;
+        return date === r.day || (r.day > last && date === last);
       case "everyN": var k = Math.round((startOfDay(ts) - startOfDay(anchor)) / DAY); return k >= 0 && k % r.n === 0;
     }
     return false;
@@ -1102,7 +1118,8 @@
     if (!ok) return null;
     var o = { kind:r.kind };
     ["dows","days"].forEach(function(k){ if (Array.isArray(r[k])) o[k] = r[k].map(Number).filter(function(x){ return isFinite(x); }).slice(0, 31); });
-    ["nth","dow","month","day","n"].forEach(function(k){ if (r[k] !== undefined) o[k] = Number(r[k]); });
+    ["nth","dow","month","day","n","year"].forEach(function(k){ if (r[k] !== undefined) o[k] = Number(r[k]); });
+    if (r.anniv === "歳" || r.anniv === "年" || r.anniv === "周年") o.anniv = r.anniv;
     if (typeof r.time === "string" && /^\d{1,2}:\d{2}$/.test(r.time)) o.time = r.time;
     return o;
   }
@@ -1119,7 +1136,12 @@
       var d = new Date(today); d.setDate(d.getDate() + k);
       if (repeatHits(r, d.getTime(), anchor)){ next = { at:d.getTime(), days:k }; break; }
     }
-    n._rep = { rule:r, label:repeatLabel(r), time:r.time || "", next:next };
+    var age = "";
+    if (r.kind === "yearly" && r.year && next){
+      var k2 = new Date(next.at).getFullYear() - r.year;
+      if (k2 > 0) age = r.anniv === "歳" ? k2 + "歳" : r.anniv === "年" ? k2 + "年" : k2 + "周年";
+    }
+    n._rep = { rule:r, label:repeatLabel(r), time:r.time || "", next:next, age:age };
     return n._rep;
   }
   function minutesUntil(clock){
@@ -1182,7 +1204,13 @@
         }
       }
       else if (nx && nx.days === 1){ t = Math.min(t, 0.2); tag = "明日" + tm; near = 20; }
+      /* 誕生日や記念日は準備がいるので、1週間前から少し寄せる */
+      else if (nx && rp.rule.kind === "yearly" && nx.days <= 7){ t = Math.min(t, 0.12); tag = "あと" + nx.days + "日"; near = 12; }
       else t = Math.min(t, 0.05);
+      if (rp.rule.kind === "yearly"){
+        if (rp.rule.anniv) r = Math.max(r, 0.8);
+        if (tag && rp.age) tag += " · " + rp.age;
+      }
       return { t:t, r:r, tag:tag, near:near, due:null, rep:rp };
     }
     if (due){
@@ -1478,7 +1506,7 @@
     };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
     var ti = todayInfo(n), extra = [], rpt = repeatOf(n);
-    if (rpt) extra.push("🔁 " + rpt.label + (rpt.next ? " · 次 " + (rpt.next.days === 0 ? "今日" : rpt.next.days === 1 ? "明日" : when(rpt.next.at).split(" ")[0]) : ""));
+    if (rpt) extra.push("🔁 " + rpt.label + (rpt.next ? " · 次 " + (rpt.next.days === 0 ? "今日" : rpt.next.days === 1 ? "明日" : when(rpt.next.at).split(" ")[0]) : "") + (rpt.age ? "（" + rpt.age + "）" : ""));
     if (ti && !ti.rep){
       if (ti.due) extra.push("期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
         + (ti.due.days === 0 ? " · 今日" : ti.due.days < 0 ? " · 過ぎた" : " · " + (ti.due.days === 1 ? "明日" : "あと" + ti.due.days + "日")));
