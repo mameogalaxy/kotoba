@@ -1670,7 +1670,19 @@
     ht.className = "title-edit"; ht.rows = 1; ht.value = n.title || ""; ht.maxLength = 200;
     ht.setAttribute("aria-label", "見出し（タップして直せます）"); ht.spellcheck = false;
     sheetBody.appendChild(ht);
-    if (n.secret){ ht.readOnly = true; requestAnimationFrame(function(){ autoGrow(ht); }); }
+    if (n.secret){
+      /* 隠したメモも見出しは直せる。見出しは暗号化しないので、パスワードっぽい所は●にする */
+      ht.value = String(n.title || "").replace(/^🔒\s*/, "");
+      ht.setAttribute("aria-label", "見出し（タップして直せます。見出しは隠れません）");
+      liveEdit(ht, true, function(v){
+        var d = detectSecret(v), t = d.hit ? d.label : v;
+        if ("🔒 " + t === n.title) return;
+        editNode(n, function(){
+          n.title = "🔒 " + t; n.titleCustom = true;
+          if (d.hit) sheetNote = { id:n.id, text:"見出しにパスワードっぽい文字があったので●にしました。" };
+        });
+      }, function(){ return String(n.title || "").replace(/^🔒\s*/, ""); });
+    }
     else liveEdit(ht, true, function(v){
       if (v === n.title) return;
       editNode(n, function(){
@@ -2977,7 +2989,7 @@
   async function resealNode(n, text){
     try {
       var enc = await sealText(text), label = secretLabel(text), rv = revealed[n.id];
-      n.enc = enc; n.title = secretTitle(label);
+      n.enc = enc; if (!n.titleCustom) n.title = secretTitle(label);
       n.materials = [{ text:label, at: ((n.materials || [])[0] || {}).at || Date.now() }];
       if (rv){ rv.text = text; rv.until = Date.now() + REVEAL_MS; }
       put(n);
@@ -3014,7 +3026,7 @@
     var rv = revealed[n.id]; if (!rv) return;
     if (!window.confirm("隠すのをやめて、普通のメモに戻しますか？ 中身がそのまま保存されます。")) return;
     var at = ((n.materials || [])[0] || {}).at || Date.now();
-    n.materials = [{ text: rv.text, at:at }]; n.title = titleOf(rv.text);
+    n.materials = [{ text: rv.text, at:at }]; n.title = n.titleCustom ? String(n.title).replace(/^🔒\s*/, "") : titleOf(rv.text);
     delete n.secret; delete n.enc; delete revealed[n.id];
     sheetNote = { id:n.id, text:"普通のメモに戻しました。" };
     put(n); openSheet(n.id);
@@ -3370,6 +3382,7 @@
       doneOn: typeof x.doneOn === "string" ? x.doneOn.slice(0, 12) : undefined,
       notToday: x.notToday ? true : undefined,
       ctxLocked: x.ctxLocked ? true : undefined,
+      titleCustom: x.titleCustom ? true : undefined,
       secret: x.secret && x.enc && typeof x.enc.ct === "string" ? true : undefined,
       enc: x.secret && x.enc && typeof x.enc.ct === "string"
         ? { v:1, k:String(x.enc.k || ""), epk:x.enc.epk, iv:String(x.enc.iv || ""), ct:x.enc.ct } : undefined
