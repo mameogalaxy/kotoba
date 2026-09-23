@@ -174,11 +174,12 @@
 
   .viewbar{display:flex; align-items:center; gap:6px; padding-block:6px 8px; border-bottom:1px solid var(--line)}
   .viewbar .tabs{border:0; padding:0; flex:1}
-  .daybar{display:flex; align-items:center; gap:10px; flex:1; min-width:0; white-space:nowrap; overflow:hidden}
+  .daybar{display:flex; align-items:center; gap:7px; flex:1; min-width:0; white-space:nowrap; overflow:hidden}
   .daybar .day{font-weight:700; font-size:15px; color:var(--ink)}
+  .daybar .t-now{font-size:15px; font-weight:800; color:var(--ink)}
   .daybar .t-hi{color:#e25b4f; font-weight:700}
   .daybar .t-lo{color:#3f8fd6; font-weight:700}
-  .daybar .wx{background:transparent; border:0; padding:4px 2px; font:inherit; font-size:13px; color:var(--ink2); overflow:hidden; text-overflow:ellipsis; min-width:0}
+  .daybar .wx{background:transparent; border:0; padding:4px 0; font:inherit; font-size:12.5px; letter-spacing:-.01em; color:var(--ink2); overflow:hidden; text-overflow:ellipsis; min-width:0}
   .legend{display:flex; gap:10px; flex:1; min-width:0; align-items:center; font-size:10.5px; color:var(--muted); flex-wrap:nowrap; white-space:nowrap; overflow:hidden}
   .viewbtn{background:transparent; border:1px solid var(--line); border-radius:99px; padding:4px 12px; font-size:11.5px; color:var(--ink2); white-space:nowrap}
   .viewbtn:hover{background:var(--surface2)}
@@ -4255,26 +4256,27 @@
   function wxForJev(){
     if (!wx || !wx.today || wx.today.day !== dayKey()) return "";
     var t = wx.today, c = WX_CODES[t.code] || ["", "不明"];
-    return c[1] + " 最高" + t.max + "° 最低" + t.min + "°" + (t.pop !== null ? " 降水確率" + t.pop + "%" : "");
+    return c[1] + " 最高" + t.max + "° 最低" + t.min + "°" + (t.pop !== null ? " 降水確率" + t.pop + "%" : "") + (wx.now ? " 今" + wx.now.temp + "°" : "");
   }
   function renderDay(){
     var d = new Date();
-    $("dayDate").textContent = (d.getMonth() + 1) + "/" + d.getDate() + "（" + DOW[d.getDay()] + "）";
+    $("dayDate").textContent = (d.getMonth() + 1) + "/" + d.getDate() + "(" + DOW[d.getDay()] + ")";
     var el = $("wx"), ok = wx && wx.today && wx.today.day === dayKey();
     el.textContent = "";
     if (wxBusy || !ok){
       el.textContent = wxBusy ? "天気を取得中…" : (wx && wx.pos ? "天気を更新" : "📍 天気を表示");
       el.setAttribute("aria-label", "天気を表示"); return;
     }
-    /* 最高は赤の↑、最低は青の↓ */
-    var t = wx.today, c = WX_CODES[t.code] || ["", ""];
-    el.appendChild(document.createTextNode((c[0] + " " + c[1]).trim() + " "));
+    /* 今の天気と気温を先に、今日の最高は赤の↑、最低は青の↓ */
+    var t = wx.today, nw = wx.now, c = WX_CODES[nw && nw.code != null ? nw.code : t.code] || ["", ""];
+    el.appendChild(document.createTextNode(c[0] + c[1] + " "));
+    if (nw){ var cur = document.createElement("span"); cur.className = "t-now"; cur.textContent = nw.temp + "°"; el.appendChild(cur); el.appendChild(document.createTextNode(" ")); }
     var hi = document.createElement("span"); hi.className = "t-hi"; hi.textContent = "↑" + t.max + "°"; el.appendChild(hi);
     el.appendChild(document.createTextNode(" "));
     var lo = document.createElement("span"); lo.className = "t-lo"; lo.textContent = "↓" + t.min + "°"; el.appendChild(lo);
     if (t.pop !== null) el.appendChild(document.createTextNode(" ☂" + t.pop + "%"));
     if (wx.place) el.appendChild(document.createTextNode(" · " + wx.place));
-    el.setAttribute("aria-label", "今日の天気 " + c[1] + " 最高" + t.max + "度 最低" + t.min + "度" + (t.pop !== null ? " 降水確率" + t.pop + "%" : "") + "（タップで更新）");
+    el.setAttribute("aria-label", "今の天気 " + c[1] + (nw ? " 今の気温" + nw.temp + "度" : "") + " 今日の最高" + t.max + "度 最低" + t.min + "度" + (t.pop !== null ? " 降水確率" + t.pop + "%" : "") + "（タップで更新）");
   }
   function wxPosition(ask){
     return new Promise(function(resolve){
@@ -4289,17 +4291,18 @@
   async function loadWeather(ask){
     if (wxBusy) return;
     if (!ask && (!wx || !wx.pos)) { renderDay(); return; }   /* 位置はまだ聞いていない */
-    if (!ask && wx && wx.today && wx.today.day === dayKey() && Date.now() - (wx.at || 0) < 30 * 60000){ renderDay(); return; }
+    if (!ask && wx && wx.today && wx.today.day === dayKey() && Date.now() - (wx.at || 0) < 15 * 60000){ renderDay(); return; }
     wxBusy = true; renderDay();
     try {
       var pos = await wxPosition(ask);
       var url = "https://api.open-meteo.com/v1/forecast?latitude=" + pos.lat + "&longitude=" + pos.lon
-        + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=1";
-      var j = await (await fetch(url)).json(), dl = j && j.daily;
+        + "&current=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=1";
+      var j = await (await fetch(url)).json(), dl = j && j.daily, cu = j && j.current;
       if (!dl || !dl.weather_code) throw new Error("bad");
       wx = { pos:pos, place:pos.place || "", at:Date.now(), today:{ day:dayKey(), code:dl.weather_code[0],
         max: Math.round(dl.temperature_2m_max[0]), min: Math.round(dl.temperature_2m_min[0]),
-        pop: dl.precipitation_probability_max && dl.precipitation_probability_max[0] !== null ? Math.round(dl.precipitation_probability_max[0]) : null } };
+        pop: dl.precipitation_probability_max && dl.precipitation_probability_max[0] !== null ? Math.round(dl.precipitation_probability_max[0]) : null },
+        now: cu && typeof cu.temperature_2m === "number" ? { temp: Math.round(cu.temperature_2m), code: cu.weather_code } : null };
       saveWx();
     } catch(e){ if (ask) note("天気を取れませんでした。電波のよいところでもう一度タップしてください。"); }
     wxBusy = false; renderDay();
@@ -4400,8 +4403,8 @@
   });
   $("wx").addEventListener("click", function(){
     if (wx && wx.today && wx.today.day === dayKey()){
-      var t = wx.today, c = WX_CODES[t.code] || ["", "不明"];
-      note("今日の天気：" + c[1] + "・最高 " + t.max + "°・最低 " + t.min + "°" + (t.pop !== null ? "・降水確率 " + t.pop + "%" : "") + (wx.place ? "（" + wx.place + "）" : "") + "。更新しています…");
+      var t = wx.today, nw = wx.now, c = WX_CODES[nw && nw.code != null ? nw.code : t.code] || ["", "不明"];
+      note("今：" + c[1] + (nw ? " " + nw.temp + "°" : "") + "／今日：最高 " + t.max + "°・最低 " + t.min + "°" + (t.pop !== null ? "・降水確率 " + t.pop + "%" : "") + (wx.place ? "（" + wx.place + "）" : "") + "。更新しています…");
     }
     loadWeather(true);
   });
