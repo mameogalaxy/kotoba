@@ -105,6 +105,7 @@
   .predrow{margin:0 0 6px 4px}
   .predtag{border:1.5px solid var(--c, var(--line)); color:var(--c, var(--muted)); background:color-mix(in srgb, var(--c, transparent) 12%, transparent);
     border-radius:99px; padding:4px 11px; font:inherit; font-size:12.5px; font-weight:700}
+  .status .vbtn{margin:4px 6px 0 0; border:1px solid var(--line); background:var(--bg); color:var(--ink2); border-radius:99px; padding:5px 12px; font:inherit; font-size:12.5px; text-decoration:none}
   .splithint{margin:0 0 6px 6px; font-size:12px; font-weight:700; color:var(--accent)}
   #input{position:relative; z-index:1;}
   #input{flex:1; min-width:0; border:0; background:transparent; resize:none; font:inherit; font-size:16px;
@@ -4591,11 +4592,27 @@
     var mic = $("mic"), rec = null, on = false;
     var MIC_ICON = mic.innerHTML, MIC_STOP = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>';
     mic.hidden = false;
+    /* 音声のあと：ボタンを押すとそのタップでキーボードも出る */
+    function addBreak(two){
+      input.value = input.value.replace(/[ \t]+$/, "") + (two ? "\n\n" : "\n");
+      input.focus(); var L = input.value.length; try { input.setSelectionRange(L, L); } catch(e){}
+      input.dispatchEvent(new Event("input"));
+    }
+    function voiceNext(){
+      statusEl.hidden = false; statusEl.className = "status"; statusEl.textContent = "";
+      statusEl.appendChild(document.createTextNode("入れました。続けるなら "));
+      [["改行", function(){ addBreak(false); statusEl.hidden = true; }],
+       ["空行（別の項目）", function(){ addBreak(true); statusEl.hidden = true; }],
+       ["🎤 続きを話す", function(){ addBreak(false); statusEl.hidden = true; mic.click(); }]].forEach(function(bt){
+        var b = document.createElement("button"); b.type = "button"; b.className = "vbtn"; b.textContent = bt[0];
+        b.onclick = bt[1]; statusEl.appendChild(b);
+      });
+    }
     mic.addEventListener("click", function(){
       if (on){ try{ rec.stop(); }catch(e){} return; }
       try { rec = new SR(); } catch(e){ mic.hidden = true; return; }
       rec.lang = "ja-JP"; rec.interimResults = true; rec.continuous = false;
-      var base = input.value ? input.value.replace(/\s+$/, "") + (/\n$/.test(input.value) ? "" : " ") : "", got = false, err = "";
+      var v0 = input.value, base = !v0 ? "" : /\n[ \t]*$/.test(v0) ? v0.replace(/[ \t]+$/, "") : v0.replace(/\s+$/, "") + " ", got = false, err = "";
       rec.onresult = function(ev){
         var t = "";
         for (var i=0;i<ev.results.length;i++) t += ev.results[i][0].transcript;
@@ -4608,9 +4625,9 @@
       rec.onend   = function(){
         on = false; mic.setAttribute("aria-pressed","false"); mic.setAttribute("aria-label","音声で入力"); mic.innerHTML = MIC_ICON;
         if (got){
-          /* 続けて書けるように、カーソルを最後に置く */
+          /* 続けて書けるように、カーソルを最後に置き、改行・空行・続きを話すボタンを出す */
           try { input.focus(); var L = input.value.length; input.setSelectionRange(L, L); } catch(e){}
-          note("入れました。直すときや改行するときは入力欄をタップ、よければ「入れる」。");
+          voiceNext();
         } else if (err === "not-allowed" || err === "service-not-allowed"){
           note("マイクが許可されていません。iPhone の「設定 → アプリ → Safari → マイク」で許可してください。", "warn");
         } else if (err && err !== "aborted"){
