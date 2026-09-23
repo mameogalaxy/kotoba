@@ -1705,7 +1705,8 @@
       sheetBody.appendChild(no);
     }
 
-    var cl = document.createElement("p"); cl.className = "block-label"; cl.textContent = "結論";
+    var cl = document.createElement("p"); cl.className = "block-label";
+    cl.textContent = n.status === "done" ? "結論" : "材料を足す";
     sheetBody.appendChild(cl);
 
     if (n.status === "done"){
@@ -1731,13 +1732,25 @@
       rb.onclick = function(){ n.status = back; delete n.statusBefore; put(n); closeSheet(); };
       re.appendChild(rb); re.appendChild(hideButton(n)); addDelete(re, n); sheetBody.appendChild(re);
     } else {
+      /* 結論の代わりに、材料を1つずつ足していく欄。足すたびに空になって、続けて足せる */
       var ta = document.createElement("textarea");
-      ta.className = "box"; ta.placeholder = "わかったこと、決めたことを一行で（空のままでも解決にできます）"; ta.value = n.conclusion || "";
+      ta.className = "box add-mat"; ta.rows = 2; ta.id = "addMat";
+      ta.placeholder = "ここに書いて「足す」で 材料" + ((n.materials || []).length + 1) + " になります";
       sheetBody.appendChild(ta);
+      var addRow = document.createElement("div"); addRow.className = "sheet-actions"; addRow.style.marginTop = "8px";
+      var addB = document.createElement("button"); addB.type = "button"; addB.className = "ghost"; addB.textContent = "＋ 材料を足す";
+      addB.onclick = function(){
+        var v = ta.value.replace(/\s+$/, "").replace(/^\s*\n/, "");
+        if (!v.trim()){ ta.focus(); return; }
+        focusAddMat = true;
+        editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:v, at:Date.now() }]); });
+      };
+      addRow.appendChild(addB); sheetBody.appendChild(addRow);
+      if (focusAddMat){ focusAddMat = false; setTimeout(function(){ var el = $("addMat"); if (el) el.focus(); }, 30); }
       var act = document.createElement("div"); act.className = "sheet-actions";
       var done = document.createElement("button"); done.type="button"; done.className = "primary"; done.textContent = "解決にする";
       done.onclick = function(){
-        var v = ta.value.trim();
+        var v = (n.conclusion || "").trim();
         n.statusBefore = n.status; n.conclusion = v; n.conclusionAt = Date.now(); n.status = "done";
         put(n); closeSheet(); currentTab = "done"; syncTabs(); render();
         noteLanded(n, "「" + n.title + "」を解決済みにしました" + (v ? "。" : "（結論なし）。"));
@@ -1801,7 +1814,7 @@
     return b;
   }
 
-  var sheetNote = null, pendingFlash = null, sheetDirty = false;
+  var sheetNote = null, pendingFlash = null, sheetDirty = false, focusAddMat = false;
 
   function autoGrow(el){ el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
   /* 表示している文字そのものを入力欄にして、タップした場所から直せるようにする。
