@@ -283,6 +283,8 @@
   .secret{border:1px dashed var(--line); border-radius:var(--radius); padding:12px 13px; margin-bottom:12px; background:var(--surface)}
   .secret .primary{margin-top:10px}
   .secret time{font-size:11px; color:var(--muted)}
+  .fields{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px}
+  .fields .copy{padding:8px 13px; font-size:13px; border-radius:99px; background:var(--accent-soft); color:var(--accent); border-color:transparent}
   .secret-mask{margin:0; font-size:14px; color:var(--ink2); white-space:pre-wrap; word-break:break-all}
   .concl{background:var(--done-soft); border:1px solid var(--done); border-radius:var(--radius); padding:12px 13px; font-size:14px}
   .concl time{display:block; font-size:11px; color:var(--muted); margin-top:6px}
@@ -1917,6 +1919,17 @@
     if (/[a-z0-9]/i.test(text.charAt(s - 1))) return false;
     return backOnly || !/[a-z]/i.test(text.charAt(e));
   }
+  /* 見つけた値に、コピーボタン用の名前を付ける */
+  function fieldName(word, value){
+    var w = String(word).toLowerCase();
+    if (/@/.test(value) || /メール|メアド|mail/.test(w)) return "メールアドレス";
+    if (/パスワード|ぱすわーど|パスコード|password|passwd|passcode|^pass$|^pw$/.test(w)) return "パスワード";
+    if (/暗証番号|^pin$/.test(w)) return "暗証番号";
+    if (/cvc|cvv|セキュリティコード/.test(w)) return "セキュリティコード";
+    if (/api|トークン|token|secret|シークレット|秘密鍵|private/.test(w)) return "キー";
+    if (/^id$|ログインid|login ?id|user ?id|ユーザーid/.test(w)) return "ID";
+    return String(word).replace(/\s+/g, "");
+  }
   /* 言葉のすぐ後ろ（「：」「は」などを挟んでもよい）に続く英数字・記号を値とみなす */
   var VALUE_AFTER = /^\s*(?:[:：=＝]|は|→|->)?\s*「?([!-~！-～]{3,})/;
   var STRONG_RES = [
@@ -1941,35 +1954,39 @@
       if (!wordAt(text, m, false) || inUrl(s)) continue;
       keyword = true;
       var v = VALUE_AFTER.exec(text.slice(e));
-      if (v){ var vs = e + v[0].length - v[1].length; ranges.push([vs, vs + v[1].length]); }
+      if (v){ var vs = e + v[0].length - v[1].length; ranges.push([vs, vs + v[1].length, fieldName(m[0], v[1])]); }
     }
-    STRONG_RES.forEach(function(re){ re.lastIndex = 0; while ((m = re.exec(text))) ranges.push([m.index, m.index + m[0].length]); });
+    STRONG_RES.forEach(function(re){ re.lastIndex = 0; while ((m = re.exec(text))) ranges.push([m.index, m.index + m[0].length, "キー"]); });
     var CARD = /\d(?:[ \-]?\d){12,18}/g;
-    while ((m = CARD.exec(text))){ var dg = m[0].replace(/\D/g, ""); if (luhn(dg)) ranges.push([m.index, m.index + m[0].length]); }
+    while ((m = CARD.exec(text))){ var dg = m[0].replace(/\D/g, ""); if (luhn(dg)) ranges.push([m.index, m.index + m[0].length, "カード番号"]); }
     /* 20文字以上で大文字・小文字・数字が混ざった塊は、鍵やトークンの可能性が高い */
     var LONG = /[A-Za-z0-9!#$%&*+\-_.~^]{20,}/g;
     while ((m = LONG.exec(text))){
       var w = m[0], before = text.charAt(m.index - 1);
       if (/[\/=?:]/.test(before)) continue;
-      if (/[a-z]/.test(w) && /[A-Z]/.test(w) && /\d/.test(w)) ranges.push([m.index, m.index + w.length]);
+      if (/[a-z]/.test(w) && /[A-Z]/.test(w) && /\d/.test(w)) ranges.push([m.index, m.index + w.length, "キー"]);
     }
-    if (!ranges.length) return { hit:false, keyword:keyword, label:text };
+    if (!ranges.length) return { hit:false, keyword:keyword, label:text, fields:[] };
     ID_WORD.lastIndex = 0;
     while ((m = ID_WORD.exec(text))){
       if (!wordAt(text, m, true)) continue;
       var ie = m.index + m[0].length, iv = VALUE_AFTER.exec(text.slice(ie));
-      if (iv){ var ivs = ie + iv[0].length - iv[1].length; ranges.push([ivs, ivs + iv[1].length]); }
+      if (iv){ var ivs = ie + iv[0].length - iv[1].length; ranges.push([ivs, ivs + iv[1].length, fieldName(m[0], iv[1])]); }
     }
     EMAIL.lastIndex = 0;
-    while ((m = EMAIL.exec(text))) ranges.push([m.index, m.index + m[0].length]);
-    ranges.sort(function(a, b){ return a[0] - b[0]; });
-    var out = "", pos = 0;
+    while ((m = EMAIL.exec(text))) ranges.push([m.index, m.index + m[0].length, "メールアドレス"]);
+    ranges.sort(function(a, b){ return a[0] - b[0] || b[1] - a[1]; });
+    var out = "", pos = 0, fields = [], seen = {};
     ranges.forEach(function(r){
       if (r[1] <= pos) return;
-      out += text.slice(pos, Math.max(pos, r[0])) + MASK; pos = r[1];
+      out += text.slice(pos, Math.max(pos, r[0])) + MASK;
+      /* 同じ名前が2つ目なら「パスワード2」のように番号を付ける */
+      var name = r[2]; seen[name] = (seen[name] || 0) + 1;
+      fields.push({ label: seen[name] > 1 ? name + seen[name] : name, value: text.slice(Math.max(pos, r[0]), r[1]) });
+      pos = r[1];
     });
     out += text.slice(pos);
-    return { hit:true, keyword:keyword, label: out.replace(/[ \t\u3000]+/g, " ").replace(/\s*\n\s*/g, "\n").trim() };
+    return { hit:true, keyword:keyword, fields:fields, label: out.replace(/[ \t\u3000]+/g, " ").replace(/\s*\n\s*/g, "\n").trim() };
   }
   /* Jev に送ってよい形。値が見つかればそこを●にしたものを送る */
   function safeForJev(text){ var d = detectSecret(text); return d.hit ? d.label : text; }
@@ -2178,17 +2195,25 @@
   }
   /* 空行で分け、さらに「ID・パスワードの行のあとに、また見出しの行が来て、その下にまた ID・パスワード」なら
      そこでも分ける。最後の「メモ：毎年更新」のように後ろに ID が続かない行は、前のものに付けたまま */
+  /* 「パスワード」「メールアドレス：」のように、行の終わりが言葉だけで値が次の行にあるか */
+  var KEY_END = new RegExp("(?:" + SECRET_WORD.source + "|" + ID_WORD.source + ")\\s*[:：=＝]?\\s*$", "i");
   function splitEntries(text){
     var out = [];
     splitBlocks(text).forEach(function(b){
-      var lines = b.split(/\n/), cred = lines.map(credLine), cur = [];
+      var lines = b.split(/\n/), cur = [];
+      var cred = lines.map(function(l, i){ return credLine(l) || (i > 0 && KEY_END.test(lines[i - 1])); });
       lines.forEach(function(l, i){
         if (!cred[i] && i > 0 && cred[i - 1] && cred.slice(i + 1).some(Boolean) && cur.length){ out.push(cur.join("\n")); cur = []; }
         cur.push(l);
       });
       if (cur.length) out.push(cur.join("\n"));
     });
-    return out;
+    /* 見出しがなく ID・パスワードから始まるまとまりは、空行で区切っていても前の項目の続き */
+    return out.reduce(function(acc, part){
+      if (acc.length && credLine(part.split("\n")[0])) acc[acc.length - 1] += "\n" + part;
+      else acc.push(part);
+      return acc;
+    }, []);
   }
   async function captureMany(parts, original){
     input.value = ""; clearFusen(); syncClear();
@@ -2365,8 +2390,15 @@
       hide.style.marginLeft = "auto";
       hide.onclick = function(){ delete revealed[n.id]; openSheet(n.id); };
       foot.appendChild(hide);
-      foot.appendChild(copyButton(function(){ return rv.text; }));
+      foot.appendChild(copyButton(function(){ return rv.text; }, "全部コピー"));
       box.appendChild(foot);
+      /* メールアドレスとパスワードを別々にコピーできるように */
+      var fs = detectSecret(rv.text).fields;
+      if (fs.length){
+        var fr = document.createElement("div"); fr.className = "fields";
+        fs.forEach(function(f){ fr.appendChild(copyButton(function(){ return f.value; }, f.label + "をコピー")); });
+        box.appendChild(fr);
+      }
       var rl = linksIn(rv.text); if (rl.length) box.appendChild(linkRow(rl));
     } else {
       var p = document.createElement("p"); p.className = "secret-mask";
