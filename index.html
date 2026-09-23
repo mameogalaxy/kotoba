@@ -1588,10 +1588,10 @@
     if (ti && !ti.rep){
       if (ti.due) extra.push("期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
         + (ti.due.days === 0 ? " · 今日" : ti.due.days < 0 ? " · 過ぎた" : " · " + (ti.due.days === 1 ? "明日" : "あと" + ti.due.days + "日")));
-      if (ti.t >= 0.3 && !(ti.due && ti.due.days !== 0)) extra.push("今日 " + Math.round(ti.t * 100) + "%");
-      if (ti.r >= 0.5) extra.push("忘れると困る " + Math.round(ti.r * 100) + "%");
+      /* 確率・重要度・鮮度は Jev と並び順の中で使うだけで、画面には出さない */
+      if (ti.t >= 0.6 && !(ti.due && ti.due.days !== 0)) extra.push("今日");
     }
-    extra.concat([n.kind, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")])
+    extra.concat([n.kind])
       .forEach(function(t){ var c=document.createElement("span"); c.className="chip"; c.textContent=t; kv.appendChild(c); });
     sheetBody.appendChild(kv);
     if (rpt && rpt.next && rpt.next.days === 0){
