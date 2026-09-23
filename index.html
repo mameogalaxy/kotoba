@@ -1290,7 +1290,7 @@
     if (!todayDismissed && !input.value.trim() && !recallState) renderFusen();
   }
   function isStale(n){
-    if (n.status !== "done" || !n.conclusionAt) return false;
+    if (n.status !== "done" || !n.conclusionAt || !n.conclusion) return false;
     return ageDays(n.conclusionAt) > (HALFLIFE[n.freshness] || 21) * 4;
   }
   function ago(ts){
@@ -1560,29 +1560,40 @@
     var cl = document.createElement("p"); cl.className = "block-label"; cl.textContent = "結論";
     sheetBody.appendChild(cl);
 
-    if (n.status === "done" && n.conclusion){
+    if (n.status === "done"){
       var c = document.createElement("div"); c.className = "concl";
-      c.appendChild(document.createTextNode(n.conclusion));
+      if (n.conclusion) c.appendChild(document.createTextNode(n.conclusion));
+      else {
+        /* 結論なしで解決にしたもの。あとから書き足せる */
+        var add = document.createElement("textarea");
+        add.className = "mat-edit"; add.rows = 1; add.placeholder = "結論は書いていません（タップして書き足せます）"; add.spellcheck = false;
+        c.appendChild(add);
+        liveEdit(add, false, function(v){ n.conclusion = v; put(n); refreshSheet(n); }, function(){ return n.conclusion || ""; });
+      }
       var cf = document.createElement("div"); cf.className = "mat-foot";
       var ct = document.createElement("time"); ct.textContent = "解決 · " + ago(n.conclusionAt || n.updatedAt);
-      cf.appendChild(ct); cf.appendChild(copyButton(function(){ return n.conclusion; }));
+      cf.appendChild(ct);
+      if (n.conclusion){ var cc = copyButton(function(){ return n.conclusion; }); cc.style.marginLeft = "auto"; cf.appendChild(cc); }
       c.appendChild(cf); sheetBody.appendChild(c);
 
+      var back = n.statusBefore === "note" ? "note" : "open";
       var re = document.createElement("div"); re.className = "sheet-actions";
-      var rb = document.createElement("button"); rb.type="button"; rb.className = "ghost"; rb.textContent = "宙ぶらりんに戻す";
-      rb.onclick = function(){ n.status = "open"; put(n); closeSheet(); };
+      var rb = document.createElement("button"); rb.type="button"; rb.className = "ghost";
+      rb.textContent = back === "note" ? "メモに戻す" : "宙ぶらりんに戻す";
+      rb.onclick = function(){ n.status = back; delete n.statusBefore; put(n); closeSheet(); };
       re.appendChild(rb); re.appendChild(hideButton(n)); addDelete(re, n); sheetBody.appendChild(re);
     } else {
       var ta = document.createElement("textarea");
-      ta.className = "box"; ta.placeholder = "わかったこと、決めたことを一行で。"; ta.value = n.conclusion || "";
+      ta.className = "box"; ta.placeholder = "わかったこと、決めたことを一行で（空のままでも解決にできます）"; ta.value = n.conclusion || "";
       sheetBody.appendChild(ta);
       var act = document.createElement("div"); act.className = "sheet-actions";
       var done = document.createElement("button"); done.type="button"; done.className = "primary"; done.textContent = "解決にする";
       done.onclick = function(){
         var v = ta.value.trim();
-        if (!v){ ta.focus(); return; }
-        n.conclusion = v; n.conclusionAt = Date.now(); n.status = "done";
+        n.statusBefore = n.status; n.conclusion = v; n.conclusionAt = Date.now(); n.status = "done";
         put(n); closeSheet(); currentTab = "done"; syncTabs(); render();
+        noteLanded(n, "「" + n.title + "」を解決済みにしました" + (v ? "。" : "（結論なし）。"));
+        Mind.flash(n.id, "✓ 解決済み");
       };
       act.appendChild(done); act.appendChild(hideButton(n)); addDelete(act, n); sheetBody.appendChild(act);
     }
@@ -2895,6 +2906,7 @@
         .slice(0, 200).map(function(m){ return { text: m.text.slice(0, 2000), at: num(m.at, Date.now()) }; }),
       conclusion: typeof x.conclusion === "string" ? x.conclusion.slice(0, 1000) : "",
       conclusionAt: num(x.conclusionAt, 0),
+      statusBefore: x.statusBefore === "note" || x.statusBefore === "open" ? x.statusBefore : undefined,
       repeat: validRepeat(x.repeat) || undefined,
       doneOn: typeof x.doneOn === "string" ? x.doneOn.slice(0, 12) : undefined,
       secret: x.secret && x.enc && typeof x.enc.ct === "string" ? true : undefined,
