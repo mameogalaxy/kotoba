@@ -326,7 +326,11 @@ Jev の `isMaterial` / `isAnswer` には「日付や時刻が同じだけでは�
 - 詳細画面の見出しのすぐ下と、一覧の各行に「🔗 App Store /app/id6473753684 ↗」のようなボタンが出る。別のタブで開き、
   App Store・YouTube などのリンクは iPhone ではそのアプリが開く
 - マップと一覧では、リンクのある項目の頭に 🔗 が付く。**見出しにはリンクを入れない**（リンクだけのメモは「App Store」のようにリンク先の名前になる）。前からある項目の見出しも、開いたときに直す
-- 開けるのは http / https だけ。URL の中の `pass`・`token` などの文字では、パスワード扱いにしない
+- App Store のリンクは App Store の商品ページなので、それだけでは App Store が開く。YouTube・X・Instagram・LINE・TikTok・Gmail・
+  Google マップ・Spotify・Slack・Discord・Facebook・Netflix・Chrome・Notion・Threads・ChatGPT・Claude・Google は
+  アプリを直接開くアドレス（`youtube://` など）がわかっているので、「▶ YouTube を開く」を先に出す。アプリが入っていなければ開けない
+- メモに `youtube://` のようなアプリのアドレスを書いても、押して開ける（`javascript:`・`data:` などは開かない）
+- URL の中の `pass`・`token` などの文字では、パスワード扱いにしない
 - 隠したメモの中のリンクは、Face ID で表示している間だけ出る
 
 ### 重複の確認

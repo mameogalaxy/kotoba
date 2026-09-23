@@ -330,6 +330,7 @@
     background:var(--accent-soft); color:var(--accent); text-decoration:none; font-weight:500;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .link:active{opacity:.7}
+  .link.app{background:var(--accent); color:var(--on-accent)}
   .chip-x{cursor:pointer; font:inherit}
   .secret{border:1px dashed var(--line); border-radius:var(--radius); padding:12px 13px; margin-bottom:12px; background:var(--surface)}
   .secret .primary{margin-top:10px}
@@ -1954,19 +1955,40 @@
     if (!text){ var l = linksIn(raw); text = l.length ? linkName(l[0]) : raw; }
     return text.length > 30 ? text.slice(0, 30) + "…" : text;
   }
-  var URL_IN_TITLE = /https?:\/\/|www\.|[a-z0-9\-]+\.(?:com|co\.jp|jp|net|org|app|io|be|gl|ly|me|tv)\/\S*/i;
+  var URL_IN_TITLE = /https?:\/\/|www\.|\b[a-z][a-z0-9+.\-]{1,30}:\/\/|[a-z0-9\-]+\.(?:com|co\.jp|jp|net|org|app|io|be|gl|ly|me|tv)\/\S*/i;
 
   /* ============================ リンク ============================ */
-  /* http(s) と www. で始まるものだけをリンクにする（javascript: などは開かない） */
-  var URL_RE = /(?:https?:\/\/|www\.)[^\s<>"'「」『』（）()【】、。，]+/gi;
+  /* http(s)・www. と、アプリを開く「youtube://」のような形をリンクにする（javascript: などは開かない） */
+  var URL_RE = /(?:https?:\/\/|www\.|\b[a-z][a-z0-9+.\-]{1,30}:\/\/)[^\s<>"'「」『』（）()【】、。，]*/gi;
+  var BAD_SCHEME = /^(javascript|data|file|vbscript|about|blob|filesystem):$/i;
   function linksIn(text){
     var out = [], seen = {};
     (String(text || "").match(URL_RE) || []).forEach(function(u){
       u = u.replace(/[.,!?:;。、…]+$/, "");
       if (/^www\./i.test(u)) u = "https://" + u;
-      try { var x = new URL(u); if (!/^https?:$/.test(x.protocol) || seen[x.href]) return; seen[x.href] = 1; out.push(x); } catch(e){}
+      try { var x = new URL(u); if (BAD_SCHEME.test(x.protocol) || seen[x.href]) return; seen[x.href] = 1; out.push(x); } catch(e){}
     });
     return out;
+  }
+  /* App Store の番号 → アプリを直接開くアドレス。アプリが入っていれば、アイコンをタップしたのと同じように開く */
+  var APP_SCHEMES = {
+    "544007664":["YouTube","youtube://"], "333903271":["X","twitter://"], "389801252":["Instagram","instagram://"],
+    "443904275":["LINE","line://"], "835599320":["TikTok","snssdk1233://"], "422689480":["Gmail","googlegmail://"],
+    "585027354":["Google マップ","comgooglemaps://"], "324684580":["Spotify","spotify://"], "618783545":["Slack","slack://"],
+    "985746746":["Discord","discord://"], "284882215":["Facebook","fb://"], "363590051":["Netflix","nflx://"],
+    "535886823":["Chrome","googlechrome://"], "1232780281":["Notion","notion://"], "6446901002":["Threads","barcelona://"],
+    "6448311069":["ChatGPT","chatgpt://"], "6473753684":["Claude","claude://"], "284815942":["Google","google://"]
+  };
+  function appOf(x){
+    if (/^https?:$/.test(x.protocol) && /(^|\.)apps\.apple\.com$/.test(x.hostname)){
+      var m = x.pathname.match(/id(\d{6,12})/); return m && APP_SCHEMES[m[1]] ? APP_SCHEMES[m[1]] : null;
+    }
+    return null;
+  }
+  function schemeName(x){
+    var p = x.protocol.replace(/:$/, "");
+    for (var k in APP_SCHEMES) if (APP_SCHEMES[k][1] === p + "://") return APP_SCHEMES[k][0];
+    return p;
   }
   function nodeLinks(n){
     if (n.secret) return [];
@@ -1974,8 +1996,13 @@
   }
   var LINK_NAMES = { "apps.apple.com":"App Store", "youtube.com":"YouTube", "youtu.be":"YouTube", "tiktok.com":"TikTok",
     "instagram.com":"Instagram", "x.com":"X", "twitter.com":"X", "amazon.co.jp":"Amazon", "maps.app.goo.gl":"Google マップ" };
-  function linkName(x){ var host = x.hostname.replace(/^www\./, ""); return LINK_NAMES[host] || host; }
+  function linkName(x){
+    if (!/^https?:$/.test(x.protocol)) return schemeName(x);
+    var ap = appOf(x); if (ap) return ap[0];
+    var host = x.hostname.replace(/^www\./, ""); return LINK_NAMES[host] || host;
+  }
   function linkLabel(x){
+    if (!/^https?:$/.test(x.protocol)) return schemeName(x) + " を開く";
     var host = x.hostname.replace(/^www\./, ""), path = (x.pathname + x.search).replace(/\/$/, "");
     var name = LINK_NAMES[host];
     var s = (name ? name + "  " : host) + (name ? path : path).slice(0, name ? 28 : 34);
@@ -1985,9 +2012,17 @@
   function linkRow(links){
     var box = document.createElement("div"); box.className = "links";
     links.forEach(function(x){
-      var a = document.createElement("a"); a.className = "link"; a.href = x.href;
-      a.target = "_blank"; a.rel = "noopener noreferrer";
-      a.textContent = "🔗 " + linkLabel(x) + "  ↗";
+      var web = /^https?:$/.test(x.protocol), ap = appOf(x);
+      /* App Store のリンクで、開き方がわかっているアプリなら「アプリを開く」を先に出す */
+      if (ap){
+        var o = document.createElement("a"); o.className = "link app"; o.href = ap[1];
+        o.textContent = "▶ " + ap[0] + " を開く";
+        o.addEventListener("click", function(e){ e.stopPropagation(); });
+        box.appendChild(o);
+      }
+      var a = document.createElement("a"); a.className = "link" + (web ? "" : " app"); a.href = x.href;
+      if (web){ a.target = "_blank"; a.rel = "noopener noreferrer"; }
+      a.textContent = web ? "🔗 " + (ap ? "App Store" : linkLabel(x)) + "  ↗" : "▶ " + linkLabel(x);
       a.addEventListener("click", function(e){ e.stopPropagation(); });
       box.appendChild(a);
     });
