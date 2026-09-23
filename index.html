@@ -733,6 +733,7 @@
       instructions:"この断片は空行で区切られたいくつかのまとまりでできている。それぞれのまとまりが、別々の用件・別々のサービス・別々の話として独立していて、1つずつ別の項目にした方がよいか。1つの話を段落に分けて書いているだけなら false。",
       criteria:{ "true":"独立した別々の項目", "false":"1つの話" }
     };
+    if (needsRepeatJudge(text)) Object.assign(qs, repeatQuestions());
     var res = await jev(state, qs);
     var a = answersOf(res);
 
@@ -755,6 +756,7 @@
       recall:     readRecall(a, text),
       secret:     asNoul(a.secret),
       separate:   asNoul(a.separate),
+      repeat:     a.repeatKind ? readRepeat(a, text) : null,
       usage:      res && res.usage
     };
   }
@@ -1004,12 +1006,184 @@
     return { at:pick.at, kind:pick.kind, days: Math.round((pick.at - today) / DAY) };
   }
 
+  /* ============================ 繰り返しの予定 ============================ */
+  /* 「毎週月曜」「毎月25日」「平日 9時」などをコードで読む。読めないときだけ Jev に選ばせる（n.repeat）。
+     その日になったら今日のことに入れ、前の日は「明日」として寄せる */
+  var DOWS = "日月火水木金土";
+  var REPEAT_CUE = /毎|ごと|おき|隔週|平日|週末|定期|繰り返|every|daily|weekly|monthly/i;
+  function zen2han(t){ return String(t || "").replace(/[０-９]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }); }
+  function parseClock(t){
+    var m = t.match(/(午前|午後|朝|昼|夕方|夜|晩)?\s*(\d{1,2})\s*(?:時|[:：](?=\d))\s*(半|(\d{1,2})\s*分?)?/);
+    if (!m) return null;
+    var h = +m[2], mi = m[3] === "半" ? 30 : (m[4] ? +m[4] : 0);
+    if (/午後|夕方|夜|晩/.test(m[1] || "") && h < 12) h += 12;
+    if (h > 24 || mi > 59) return null;
+    return pad2(h % 24).replace(/^0(?=\d)/, "") + ":" + pad2(mi);
+  }
+  /* 「月・木曜」「月水金」「月曜と木曜」から曜日を取り出す。「日本語」の日のような字は数えない */
+  function dowsAfter(seg){
+    var m = seg.match(/^\s*((?:[月火水木金土日](?:曜日?)?\s*[・、,と／\/]?\s*)+)/);
+    if (!m) return [];
+    var cap = m[1].replace(/[・、,と／\/\s]+$/, ""), rest = seg.slice(m[0].length);
+    var ok = /曜/.test(cap) || cap.replace(/[^月火水木金土日]/g, "").length >= 2 || !/^[一-龥ァ-ヺ]/.test(rest);
+    if (!ok) return [];
+    var out = [];
+    (cap.match(/[月火水木金土日]/g) || []).forEach(function(c){ var d = DOWS.indexOf(c); if (out.indexOf(d) < 0) out.push(d); });
+    return out.sort(function(a, b){ return (a + 6) % 7 - (b + 6) % 7; });
+  }
+  function repeatLabel(r){
+    var ds = function(){ return r.dows.map(function(d){ return DOWS.charAt(d); }).join("・") + "曜"; };
+    var s = { daily:"毎日", weekdays:"平日", weekends:"毎週末", monthEnd:"毎月末" }[r.kind]
+      || (r.kind === "weekly" ? "毎週" + ds()
+      : r.kind === "biweekly" ? "隔週" + ds()
+      : r.kind === "monthly" ? "毎月" + r.days.join("・") + "日"
+      : r.kind === "nth" ? "毎月第" + r.nth + DOWS.charAt(r.dow) + "曜"
+      : r.kind === "yearly" ? "毎年" + r.month + "/" + r.day
+      : r.kind === "everyN" ? r.n + "日ごと" : "");
+    return s + (r.time ? " " + r.time : "");
+  }
+  function parseRepeat(text){
+    var t = zen2han(text).replace(/[ \t　]+/g, " "), m, r = null;
+    if (!REPEAT_CUE.test(t)) return null;
+    var nums = { "一":1, "二":2, "三":3, "四":4, "五":5 };
+    if (/毎月末|月末(?:ごと|毎|に毎回)|毎月最終日/.test(t)) r = { kind:"monthEnd" };
+    else if ((m = t.match(/毎月\s*(?:の\s*)?第\s*([1-5一二三四五])\s*(?:週)?\s*の?\s*([月火水木金土日])曜/)))
+      r = { kind:"nth", nth: nums[m[1]] || +m[1], dow: DOWS.indexOf(m[2]) };
+    else if ((m = t.match(/毎月\s*(?:の\s*)?(\d{1,2})\s*日((?:\s*[・、,と]\s*\d{1,2}\s*日)*)/))){
+      var days = [+m[1]].concat((m[2].match(/\d{1,2}/g) || []).map(Number)).filter(function(x){ return x >= 1 && x <= 31; });
+      if (days.length) r = { kind:"monthly", days: days.filter(function(x, i, a){ return a.indexOf(x) === i; }).sort(function(a, b){ return a - b; }) };
+    }
+    else if ((m = t.match(/毎年\s*(\d{1,2})\s*[月\/]\s*(\d{1,2})/)) && +m[1] >= 1 && +m[1] <= 12)
+      r = { kind:"yearly", month:+m[1], day:+m[2] };
+    else if ((m = t.match(/毎([月火水木金土日])曜/))) r = { kind:"weekly", dows:[DOWS.indexOf(m[1])] };
+    else if (/隔週|2週間?(?:ごと|おき|に1回|に一回)/.test(t)){
+      var bd = dowsAfter((t.match(/(?:隔週|2週間?(?:ごと|おき|に1回|に一回))\s*(?:の)?(.*)/) || [])[1] || "");
+      if (!bd.length){ var any = t.match(/([月火水木金土日])曜/); if (any) bd = [DOWS.indexOf(any[1])]; }
+      if (bd.length) r = { kind:"biweekly", dows: bd };
+    }
+    else if ((m = t.match(/毎週\s*(?:の\s*)?(.*)/)) && dowsAfter(m[1]).length) r = { kind:"weekly", dows: dowsAfter(m[1]) };
+    else if ((m = t.match(/([月火水木金土日]曜日?(?:\s*[・、,と]\s*[月火水木金土日]曜日?)*)\s*(?:は|に|の)?\s*(?:毎週|ごと|毎回)/)) && dowsAfter(m[1]).length)
+      r = { kind:"weekly", dows: dowsAfter(m[1]) };
+    else if (/平日/.test(t)) r = { kind:"weekdays" };
+    else if (/毎週末|週末(?:ごと|は毎回|毎)|土日(?:ごと|は毎回)/.test(t)) r = { kind:"weekends" };
+    else if ((m = t.match(/(\d{1,2})\s*日\s*(ごと|おき)/)) && +m[1] >= 1) r = { kind:"everyN", n: +m[1] + (m[2] === "おき" ? 1 : 0) };
+    else if (/毎日|毎朝|毎晩|毎夜|日課/.test(t)) r = { kind:"daily" };
+    if (!r) return null;
+    var clock = parseClock(t); if (clock) r.time = clock;
+    return r;
+  }
+  function weekStart(ts){ var d = new Date(startOfDay(ts)); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); }
+  function repeatHits(r, ts, anchor){
+    var d = new Date(ts), dow = d.getDay(), date = d.getDate();
+    var last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    switch (r.kind){
+      case "daily": return true;
+      case "weekdays": return dow >= 1 && dow <= 5;
+      case "weekends": return dow === 0 || dow === 6;
+      case "weekly": return r.dows.indexOf(dow) >= 0;
+      case "biweekly": return r.dows.indexOf(dow) >= 0 && Math.round((weekStart(ts) - weekStart(anchor)) / (7 * DAY)) % 2 === 0;
+      case "monthly": return r.days.some(function(x){ return x === date || (x > last && date === last); });
+      case "monthEnd": return date === last;
+      case "nth": return dow === r.dow && Math.ceil(date / 7) === r.nth;
+      case "yearly": return d.getMonth() + 1 === r.month && date === r.day;
+      case "everyN": var k = Math.round((startOfDay(ts) - startOfDay(anchor)) / DAY); return k >= 0 && k % r.n === 0;
+    }
+    return false;
+  }
+  function validRepeat(r){
+    if (!r || typeof r !== "object") return null;
+    var ok = { daily:1, weekdays:1, weekends:1, monthEnd:1 }[r.kind]
+      || ((r.kind === "weekly" || r.kind === "biweekly") && Array.isArray(r.dows) && r.dows.length)
+      || (r.kind === "monthly" && Array.isArray(r.days) && r.days.length)
+      || (r.kind === "nth" && r.nth >= 1 && r.nth <= 5 && r.dow >= 0 && r.dow <= 6)
+      || (r.kind === "yearly" && r.month >= 1 && r.month <= 12 && r.day >= 1 && r.day <= 31)
+      || (r.kind === "everyN" && r.n >= 1);
+    if (!ok) return null;
+    var o = { kind:r.kind };
+    ["dows","days"].forEach(function(k){ if (Array.isArray(r[k])) o[k] = r[k].map(Number).filter(function(x){ return isFinite(x); }).slice(0, 31); });
+    ["nth","dow","month","day","n"].forEach(function(k){ if (r[k] !== undefined) o[k] = Number(r[k]); });
+    if (typeof r.time === "string" && /^\d{1,2}:\d{2}$/.test(r.time)) o.time = r.time;
+    return o;
+  }
+  function nodeRepeatText(n){ return [n.title].concat((n.materials || []).map(function(m){ return m.text; })).join("\n"); }
+  /* 書いてある文字から読めればそれを、読めなければ Jev が選んだものを使う。今日・次の回も付ける */
+  function repeatOf(n){
+    var key = (n.updatedAt || 0) + "|" + dayKey();
+    if (n._repKey === key) return n._rep;
+    n._repKey = key;
+    var r = parseRepeat(nodeRepeatText(n)) || validRepeat(n.repeat);
+    if (!r){ n._rep = null; return null; }
+    var anchor = startOfDay(n.createdAt || n.updatedAt || Date.now()), today = startOfDay(Date.now()), next = null;
+    for (var k = 0; k < 400; k++){
+      var d = new Date(today); d.setDate(d.getDate() + k);
+      if (repeatHits(r, d.getTime(), anchor)){ next = { at:d.getTime(), days:k }; break; }
+    }
+    n._rep = { rule:r, label:repeatLabel(r), time:r.time || "", next:next };
+    return n._rep;
+  }
+  function minutesUntil(clock){
+    var p = clock.split(":"), d = new Date(); d.setHours(+p[0], +p[1], 0, 0);
+    return Math.round((d.getTime() - Date.now()) / 60000);
+  }
+  /* 書いてある文字から繰り返しが読めないときに、Jev に型を選ばせる質問 */
+  function repeatQuestions(){
+    var dayOpts = {}; for (var i = 1; i <= 31; i++) dayOpts[i + "日"] = null; dayOpts["月末"] = null; dayOpts["指定なし"] = null;
+    return {
+      repeatKind: { type:"choice",
+        instructions:"この断片が、繰り返しの予定・習慣かどうか。繰り返すなら、その型を選ぶ。1回きりの予定や、繰り返しではないメモなら「繰り返さない」。",
+        criteria:{ "繰り返さない":null, "毎日":null, "平日":null, "週末":null, "毎週":"決まった曜日に毎週", "隔週":"決まった曜日に2週に1回",
+          "毎月の日付":"毎月決まった日（25日など）", "毎月の第何曜日":"毎月第2火曜日など", "毎年":"毎年決まった月日" } },
+      repeatDow: { type:"choice", instructions:"繰り返す曜日。決まっていなければ「指定なし」。",
+        criteria:{ "月曜":null, "火曜":null, "水曜":null, "木曜":null, "金曜":null, "土曜":null, "日曜":null, "指定なし":null } },
+      repeatDay: { type:"choice", instructions:"毎月・毎年の予定なら、その日付。決まっていなければ「指定なし」。", criteria: dayOpts },
+      repeatNth: { type:"choice", instructions:"毎月第何曜日の予定なら、第何週か。決まっていなければ「指定なし」。",
+        criteria:{ "第1":null, "第2":null, "第3":null, "第4":null, "第5":null, "指定なし":null } },
+      repeatMonth: { type:"choice", instructions:"毎年の予定なら、その月。決まっていなければ「指定なし」。",
+        criteria:{ "1月":null, "2月":null, "3月":null, "4月":null, "5月":null, "6月":null, "7月":null, "8月":null, "9月":null, "10月":null, "11月":null, "12月":null, "指定なし":null } }
+    };
+  }
+  function needsRepeatJudge(text){ return REPEAT_CUE.test(zen2han(text)) && !parseRepeat(text); }
+  function readRepeat(a, text){
+    var kind = asChoice(a.repeatKind); if (!kind || kind === "繰り返さない") return null;
+    var dow = DOWS.indexOf(String(asChoice(a.repeatDow) || "").charAt(0)), dayS = asChoice(a.repeatDay) || "";
+    var day = parseInt(dayS, 10), nth = parseInt(String(asChoice(a.repeatNth) || "").replace(/\D/g, ""), 10);
+    var month = parseInt(asChoice(a.repeatMonth) || "", 10), r = null;
+    if (kind === "毎日") r = { kind:"daily" };
+    else if (kind === "平日") r = { kind:"weekdays" };
+    else if (kind === "週末") r = { kind:"weekends" };
+    else if (kind === "毎週" && dow >= 0) r = { kind:"weekly", dows:[dow] };
+    else if (kind === "隔週" && dow >= 0) r = { kind:"biweekly", dows:[dow] };
+    else if (kind === "毎月の日付" && dayS === "月末") r = { kind:"monthEnd" };
+    else if (kind === "毎月の日付" && day >= 1) r = { kind:"monthly", days:[day] };
+    else if (kind === "毎月の第何曜日" && nth >= 1 && dow >= 0) r = { kind:"nth", nth:nth, dow:dow };
+    else if (kind === "毎年" && month >= 1 && day >= 1) r = { kind:"yearly", month:month, day:day };
+    if (r){ var c = parseClock(zen2han(text)); if (c) r.time = c; }
+    return r;
+  }
+
   /* Jev の判定（今日に関係するか・忘れると困るか）と、書いてある期日を合わせる */
   function todayInfo(n){
     if (n.status === "done") return null;
-    var j = todayOf(n), due = dueOf(n);
-    if (!j && !due) return null;
+    var j = todayOf(n), rp = repeatOf(n), due = rp ? null : dueOf(n);
+    if (!j && !due && !rp) return null;
     var t = j ? j.t : 0, r = j ? j.r : 0, tag = "", near = 0;
+    /* 繰り返しの予定は、書いてある曜日・日付で決める（Jev が今日と言っても、その日でなければ今日にしない） */
+    if (rp){
+      var nx = rp.next, tm = rp.time ? " " + rp.time : "";
+      if (n.doneOn === dayKey()){ t = 0; r = Math.min(r, 0.2); }
+      else if (nx && nx.days === 0){
+        t = Math.max(t, 0.95); tag = "今日" + tm;
+        if (rp.time){
+          var mins = minutesUntil(rp.time);
+          if (mins >= 0 && mins <= 60){ tag = "もうすぐ" + tm; near = 25; }
+          else if (mins < 0 && mins >= -30){ tag = "いま" + tm; near = 25; }
+          else if (mins < -180){ t = 0.6; tag = rp.time + " 過ぎ"; }
+        }
+      }
+      else if (nx && nx.days === 1){ t = Math.min(t, 0.2); tag = "明日" + tm; near = 20; }
+      else t = Math.min(t, 0.05);
+      return { t:t, r:r, tag:tag, near:near, due:null, rep:rp };
+    }
     if (due){
       var d = due.days;
       if (due.kind === "deadline"){
@@ -1067,6 +1241,8 @@
         var it = { 番号:"i" + k, 見出し:n.title, 書いた日: when(n.createdAt || n.updatedAt, true) };
         var du = dueOf(n);
         if (du) it.期日 = when(du.at).split(" ")[0] + (du.kind === "deadline" ? "まで" : "");
+        var rp = repeatOf(n);
+        if (rp) it.繰り返し = rp.label + (rp.next ? "（次は " + when(rp.next.at).split(" ")[0] + "）" : "");
         if (body && body !== n.title) it.抜粋 = body.slice(0, 80);
         qs["today" + k] = { type:"noul",
           instructions:"項目 i" + k + "「" + n.title.slice(0, 40) + "」は、今日（" + todayLabel + "）に関係するか。今日やること・今日が期日・今日の予定・今日のうちに確認すべきことなら true。",
@@ -1104,7 +1280,8 @@
       .slice(0, 4);
     todayState = list.length ? { picked: list.map(function(x){
       var i = x.i, label;
-      if (i.t >= 0.6) label = "今日 " + Math.round(i.t * 100) + "%";
+      if (i.rep && i.tag) label = i.tag + " · " + i.rep.label.replace(/ \d{1,2}:\d{2}$/, "");
+      else if (i.t >= 0.6) label = "今日 " + Math.round(i.t * 100) + "%";
       else if (i.tag && i.tag !== "忘れずに") label = i.tag + (i.r >= 0.5 ? " · 忘れずに" : "");
       else label = "忘れずに " + Math.round(i.r * 100) + "%";
       return { n:x.n, why:"", ts:0, tag:label };
@@ -1299,8 +1476,9 @@
       if (isNew) onBranchesAdded([name], n.id);
     };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
-    var ti = todayInfo(n), extra = [];
-    if (ti){
+    var ti = todayInfo(n), extra = [], rpt = repeatOf(n);
+    if (rpt) extra.push("🔁 " + rpt.label + (rpt.next ? " · 次 " + (rpt.next.days === 0 ? "今日" : rpt.next.days === 1 ? "明日" : when(rpt.next.at).split(" ")[0]) : ""));
+    if (ti && !ti.rep){
       if (ti.due) extra.push("期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
         + (ti.due.days === 0 ? " · 今日" : ti.due.days < 0 ? " · 過ぎた" : " · " + (ti.due.days === 1 ? "明日" : "あと" + ti.due.days + "日")));
       if (ti.t >= 0.3 && !(ti.due && ti.due.days !== 0)) extra.push("今日 " + Math.round(ti.t * 100) + "%");
@@ -1309,6 +1487,18 @@
     extra.concat([n.kind, "重要度 " + (n.importance||3) + "/5", "鮮度 " + (n.freshness||"数週間もつ")])
       .forEach(function(t){ var c=document.createElement("span"); c.className="chip"; c.textContent=t; kv.appendChild(c); });
     sheetBody.appendChild(kv);
+    if (rpt && rpt.next && rpt.next.days === 0){
+      var dn = document.createElement("div"); dn.className = "sheet-actions"; dn.style.marginTop = "0";
+      var db = document.createElement("button"); db.type = "button";
+      var doneToday = n.doneOn === dayKey();
+      db.className = doneToday ? "ghost" : "primary";
+      db.textContent = doneToday ? "✓ 今日の分は済み（取り消す）" : "今日の分は済みにする";
+      db.onclick = function(){
+        if (n.doneOn === dayKey()) delete n.doneOn; else n.doneOn = dayKey();
+        put(n); pinToday(); openSheet(n.id);
+      };
+      dn.appendChild(db); sheetBody.appendChild(dn);
+    }
     sheetBody.appendChild(picker);
     sheetBody.appendChild(form);
 
@@ -1530,9 +1720,13 @@
     var qs = classifyQuestions([]);
     var body = [n.title].concat((n.materials || []).map(function(m){ return m.text; }))
       .filter(function(t, i, arr){ return arr.indexOf(t) === i; }).join("\n").slice(0, 1500);
-    var res = await jev({ 断片: body, 現在時刻: new Date().toISOString() },
-      { unresolved: qs.unresolved, kind: qs.kind, context: qs.context, importance: qs.importance, freshness: qs.freshness });
+    var ask = { unresolved: qs.unresolved, kind: qs.kind, context: qs.context, importance: qs.importance, freshness: qs.freshness };
+    var judgeRep = needsRepeatJudge(body);
+    if (judgeRep) Object.assign(ask, repeatQuestions());
+    var res = await jev({ 断片: body, 現在時刻: new Date().toISOString() }, ask);
     var a = answersOf(res);
+    if (judgeRep){ var rr = readRepeat(a, body); if (rr) n.repeat = rr; else delete n.repeat; }
+    else if (!REPEAT_CUE.test(zen2han(body))) delete n.repeat;
     var kind = asChoice(a.kind), ctx = asChoice(a.context), un = asNoul(a.unresolved);
     var imp = asScore(a.importance, IMP_LEVELS), fr = asScore(a.freshness, FRESH_LEVELS);
     if (kind && KINDS.indexOf(kind) >= 0) n.kind = kind;
@@ -2536,6 +2730,7 @@
         createdAt:t, updatedAt:t,
         materials:[{ text:text, at:t }], conclusion:"", conclusionAt:0
       };
+      if (r.repeat) n.repeat = r.repeat;
       saveNew(n, function(t, how){
         if (how === "replaced"){ note("前の「" + t.title + "」を新しい内容に置き換えました。"); Mind.flash(t.id, "置き換えました"); return; }
         note((isQ ? "宙ぶらりんに積みました。" : "メモに入れました。") + pct("未解決", r.unresolved));
@@ -2666,6 +2861,8 @@
         .slice(0, 200).map(function(m){ return { text: m.text.slice(0, 2000), at: num(m.at, Date.now()) }; }),
       conclusion: typeof x.conclusion === "string" ? x.conclusion.slice(0, 1000) : "",
       conclusionAt: num(x.conclusionAt, 0),
+      repeat: validRepeat(x.repeat) || undefined,
+      doneOn: typeof x.doneOn === "string" ? x.doneOn.slice(0, 12) : undefined,
       secret: x.secret && x.enc && typeof x.enc.ct === "string" ? true : undefined,
       enc: x.secret && x.enc && typeof x.enc.ct === "string"
         ? { v:1, k:String(x.enc.k || ""), epk:x.enc.epk, iv:String(x.enc.iv || ""), ct:x.enc.ct } : undefined
@@ -3410,6 +3607,11 @@
     $("lockNote").textContent = "Face ID を待っています…";
     registerLock(function(){ note("Face ID を登録しました。"); }, null, showLockNote);
   });
+  var tagSig = "";
+  setInterval(function(){
+    var sig = dayKey() + "|" + nodes.map(todayTag).join("|");
+    if (sig !== tagSig){ var first = !tagSig; tagSig = sig; if (!first){ render(); pinToday(); } }
+  }, 60000);
   /* アプリを離れたら、見えている中身と開ける鍵をすぐ忘れる */
   document.addEventListener("visibilitychange", function(){ if (document.hidden) forgetSecrets(); });
   $("bkCopy").addEventListener("click", copyBackup);
