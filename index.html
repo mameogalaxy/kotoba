@@ -176,6 +176,8 @@
   .viewbar .tabs{border:0; padding:0; flex:1}
   .daybar{display:flex; align-items:center; gap:10px; flex:1; min-width:0; white-space:nowrap; overflow:hidden}
   .daybar .day{font-weight:700; font-size:15px; color:var(--ink)}
+  .daybar .t-hi{color:#e25b4f; font-weight:700}
+  .daybar .t-lo{color:#3f8fd6; font-weight:700}
   .daybar .wx{background:transparent; border:0; padding:4px 2px; font:inherit; font-size:13px; color:var(--ink2); overflow:hidden; text-overflow:ellipsis; min-width:0}
   .legend{display:flex; gap:10px; flex:1; min-width:0; align-items:center; font-size:10.5px; color:var(--muted); flex-wrap:nowrap; white-space:nowrap; overflow:hidden}
   .viewbtn{background:transparent; border:1px solid var(--line); border-radius:99px; padding:4px 12px; font-size:11.5px; color:var(--ink2); white-space:nowrap}
@@ -264,6 +266,9 @@
     35% { box-shadow:0 0 0 9px transparent; }
     100%{ box-shadow:0 0 0 0 transparent; background-color:var(--bg) }
   }
+  .mm.mm-cat.flash{animation:catPulse 1.2s ease-out 3}
+  .mm.mm-cat.landing{background-color:var(--c); box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 40%, transparent)}
+  @keyframes catPulse{ 0%{box-shadow:0 0 0 0 var(--c)} 70%{box-shadow:0 0 0 12px transparent} 100%{box-shadow:0 0 0 0 transparent} }
   .mm.landing{box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 45%, transparent); background-color:color-mix(in srgb, var(--c) 14%, var(--bg))}
   .drop-tag{position:absolute; left:0; top:0; z-index:5; white-space:nowrap; border:0; cursor:pointer; font-family:inherit;
     font-size:11px; font-weight:700; color:#fff; background:var(--c); padding:4px 10px; border-radius:99px;
@@ -1704,6 +1709,7 @@
       if (hintIn.value.trim()) hints[name] = hintIn.value.trim();
       c.contexts = list; c.contextHints = hints; setCfg(c); loadContexts();
       n.context = name; n.ctxLocked = true; saveNodes(); render(); openSheet(n.id);
+      pendingFlash = { id:n.id, label: "✨ 新しい枝「" + name + "」に入りました" };
       if (isNew) onBranchesAdded([name], n.id);
     };
     ctxBtn.onclick = function(){ picker.hidden = !picker.hidden; };
@@ -3066,13 +3072,14 @@
     if (catTag){
       var name = catTag.isNew ? $("catNew").value.trim() : catTag.name;
       if (!name){ $("catNew").focus(); return; }
+      var catTag0New = catTag.isNew;
       if (catTag.isNew){
         var err = addBranch(name);
         if (err && err !== "exists"){ note(err, "bad"); return; }
         if (!err) onBranchesAdded([name]);
       }
       clearCatTag();
-      if (!text){ note(catTag0Msg(name)); return; }
+      if (!text){ note(catTag0Msg(name)); if (catTag0New) Mind.flashCat(name, "✨ 新しい枝"); return; }
       captureText(text, false, name);
       return;
     }
@@ -3238,7 +3245,7 @@
     setCfg(c);
     loadContexts();
     var added = branchList().filter(function(k){ return before.indexOf(k) < 0; });
-    if (added.length) onBranchesAdded(added, null);
+    if (added.length){ setTimeout(function(){ Mind.flashCat(added[0], "✨ 新しい枝"); }, 300); onBranchesAdded(added, null); }
     render();
     verified = false;
     updateEngine();
@@ -3406,6 +3413,7 @@
     if (err === "exists"){ note("「" + name + "」の枝はもうあります。"); return true; }
     if (err){ note(err, "bad"); return true; }
     note("枝「" + name + "」を作りました。" + (getCfg().key ? "今ある項目から当てはまるものを探しています…" : ""));
+    Mind.flashCat(name, "✨ 新しい枝");
     onBranchesAdded([name]);
     return true;
   }
@@ -3537,6 +3545,7 @@
       n.context = to; delete n.ctxLocked; counts[to] = (counts[to] || 0) + 1;
     }
     saveNodes(); render(); statusEl.hidden = true;
+    if (items.length) Mind.flashMany(items.map(function(n){ return n.id; }), "「" + name + "」から移りました");
     var sum = Object.keys(counts).map(function(k){ return k + " " + counts[k] + "件"; }).join("・");
     showNotice("「" + name + "」の枝を消しました。" + (items.length ? "中にあった " + items.length + "件は、" + sum + " に入れました。" : ""), [
       { label:"OK", primary:true },
@@ -3661,7 +3670,7 @@
     var ex = moved.slice(0, 3).map(function(x){ return "「" + x.n.title.slice(0, 14) + (x.n.title.length > 14 ? "…" : "") + "」"; }).join("");
     showNotice("新しい枝「" + names.join("・") + "」の方がふさわしい過去の項目を " + moved.length + "件移しました：" + ex + (moved.length > 3 ? " ほか" : "") + "。",
       [{ label:"元に戻す", run:function(){ restore(snap); } }, { label:"OK", primary:true }]);
-    if (!openId) Mind.flash(moved[0].n.id, ctxName(moved[0].n.context) + " に移しました");
+    if (!openId) Mind.flashMany(moved.map(function(x){ return x.n.id; }), ctxName(moved[0].n.context) + " に移しました", names.length === 1 ? names[0] : null);
   }
 
   async function onBranchesAdded(names, exceptId){
@@ -4018,7 +4027,9 @@
     function clearHold(){
       clearTimeout(holdTimer);
       if (hold){
-        var el = els["i:" + hold.id]; if (el) el.classList.remove("landing", "flash");
+        [hold.key].concat((hold.others || []).map(function(x){ return "i:" + x; }), hold.extra || []).forEach(function(k){
+          var e2 = els[k]; if (e2) e2.classList.remove("landing", "flash");
+        });
         var tag = hold.tag;
         if (tag){ tag.style.opacity = "0"; setTimeout(function(){ if (tag.parentNode) tag.parentNode.removeChild(tag); }, 420); }
       }
@@ -4026,9 +4037,22 @@
     }
     function placeHold(){
       if (!holding()) return;
-      var n = find(hold.id); if (!n){ clearHold(); return; }
-      var el = els["i:" + hold.id];
-      if (!el){ if (!expanded[catOf(n)]){ expanded[catOf(n)] = true; layout(true); } return; }
+      var el = els[hold.key];
+      if (hold.cat){ if (!el){ clearHold(); return; } }
+      else {
+        var n = find(hold.id); if (!n){ clearHold(); return; }
+        if (!el){ if (!expanded[catOf(n)]){ expanded[catOf(n)] = true; layout(true); } return; }
+      }
+      /* いっしょに動いた項目も光らせる（隠れている枝は広げる） */
+      var grow = false;
+      (hold.others || []).forEach(function(oid){
+        var on = find(oid); if (!on) return;
+        var oe = els["i:" + oid];
+        if (!oe){ if (!expanded[catOf(on)]){ expanded[catOf(on)] = true; grow = true; } return; }
+        if (!oe.classList.contains("landing")){ oe.classList.remove("flash"); void oe.offsetWidth; oe.classList.add("flash", "landing"); }
+      });
+      if (grow){ layout(true); return; }
+      (hold.extra || []).forEach(function(k){ var xe = els[k]; if (xe && !xe.classList.contains("landing")) xe.classList.add("flash", "landing"); });
       var sr = stage.getBoundingClientRect(), r = el.getBoundingClientRect();
       var y = r.top - sr.top, h = wrap.clientHeight;
       if (y < wrap.scrollTop + 40 || y + r.height > wrap.scrollTop + h - 10)
@@ -4037,8 +4061,8 @@
       var tag = hold.tag;
       if (!tag || !tag.parentNode){
         tag = hold.tag = document.createElement("button"); tag.type = "button"; tag.className = "drop-tag";
-        var id = hold.id;
-        tag.onclick = function(e){ e.stopPropagation(); clearHold(); openSheet(id); };
+        var id = hold.id, cat = hold.cat;
+        tag.onclick = function(e){ e.stopPropagation(); clearHold(); if (cat) openBranch(cat); else openSheet(id); };
         stage.appendChild(tag);
       }
       tag.style.setProperty("--c", el.style.getPropertyValue("--c"));
@@ -4140,7 +4164,23 @@
       /* 入れた項目の場所を7秒ほど見せ続ける。そのあいだに描き直しが入っても中心へ戻らず、そこに留まる */
       flash: function(id, label){
         clearHold();
-        hold = { id:id, label: label || "ここに入りました", until: Date.now() + HOLD_MS };
+        hold = { key:"i:" + id, id:id, label: label || "ここに入りました", until: Date.now() + HOLD_MS };
+        holdTimer = setTimeout(clearHold, HOLD_MS);
+        setTimeout(placeHold, 700);
+      },
+      /* 枝の札を光らせる（新しく作った枝など）。札を押すとその枝のパネル */
+      flashCat: function(name, label){
+        clearHold();
+        hold = { key:"c:" + name, cat:name, label: label || "新しい枝", until: Date.now() + HOLD_MS };
+        holdTimer = setTimeout(clearHold, HOLD_MS);
+        setTimeout(placeHold, 700);
+      },
+      /* いくつかの項目をまとめて光らせる。札は最初の1つに付ける */
+      flashMany: function(ids, label, cat){
+        ids = (ids || []).filter(function(x){ return !!find(x); });
+        if (!ids.length) return;
+        clearHold();
+        hold = { key:"i:" + ids[0], id:ids[0], others: ids.slice(1), extra: cat ? ["c:" + cat] : [], label: label || "ここに移りました", until: Date.now() + HOLD_MS };
         holdTimer = setTimeout(clearHold, HOLD_MS);
         setTimeout(placeHold, 700);
       },
@@ -4210,9 +4250,21 @@
   function renderDay(){
     var d = new Date();
     $("dayDate").textContent = (d.getMonth() + 1) + "/" + d.getDate() + "（" + DOW[d.getDay()] + "）";
-    var el = $("wx"), t = wxText();
-    el.textContent = wxBusy ? "天気を取得中…" : t || (wx && wx.pos ? "天気を更新" : "📍 天気を表示");
-    el.setAttribute("aria-label", t ? "天気 " + t + "（タップで更新）" : "天気を表示");
+    var el = $("wx"), ok = wx && wx.today && wx.today.day === dayKey();
+    el.textContent = "";
+    if (wxBusy || !ok){
+      el.textContent = wxBusy ? "天気を取得中…" : (wx && wx.pos ? "天気を更新" : "📍 天気を表示");
+      el.setAttribute("aria-label", "天気を表示"); return;
+    }
+    /* 最高は赤の↑、最低は青の↓ */
+    var t = wx.today, c = WX_CODES[t.code] || ["", ""];
+    el.appendChild(document.createTextNode((c[0] + " " + c[1]).trim() + " "));
+    var hi = document.createElement("span"); hi.className = "t-hi"; hi.textContent = "↑" + t.max + "°"; el.appendChild(hi);
+    el.appendChild(document.createTextNode(" "));
+    var lo = document.createElement("span"); lo.className = "t-lo"; lo.textContent = "↓" + t.min + "°"; el.appendChild(lo);
+    if (t.pop !== null) el.appendChild(document.createTextNode(" ☂" + t.pop + "%"));
+    if (wx.place) el.appendChild(document.createTextNode(" · " + wx.place));
+    el.setAttribute("aria-label", "今日の天気 " + c[1] + " 最高" + t.max + "度 最低" + t.min + "度" + (t.pop !== null ? " 降水確率" + t.pop + "%" : "") + "（タップで更新）");
   }
   function wxPosition(ask){
     return new Promise(function(resolve){
@@ -4336,7 +4388,13 @@
   input.addEventListener("keydown", function(e){
     if (e.key === "Backspace" && !input.value && catTag && !e.isComposing){ clearCatTag(); }
   });
-  $("wx").addEventListener("click", function(){ loadWeather(true); });
+  $("wx").addEventListener("click", function(){
+    if (wx && wx.today && wx.today.day === dayKey()){
+      var t = wx.today, c = WX_CODES[t.code] || ["", "不明"];
+      note("今日の天気：" + c[1] + "・最高 " + t.max + "°・最低 " + t.min + "°" + (t.pop !== null ? "・降水確率 " + t.pop + "%" : "") + (wx.place ? "（" + wx.place + "）" : "") + "。更新しています…");
+    }
+    loadWeather(true);
+  });
   function growInput(){
     input.style.height = "auto";
     input.style.height = Math.min(140, input.scrollHeight) + "px";
