@@ -102,6 +102,9 @@
   .mirror .cut::before{content:""; position:absolute; left:18px; right:0; top:50%; border-top:2px dashed var(--accent)}
   .mirror .cut::after{content:"✂"; position:absolute; left:0; top:50%; transform:translateY(-52%); color:var(--accent); font-size:14px; line-height:1}
   .mirror .cuttop{box-shadow:inset 0 2px 0 var(--accent)}
+  .predrow{margin:0 0 6px 4px}
+  .predtag{border:1.5px solid var(--c, var(--line)); color:var(--c, var(--muted)); background:color-mix(in srgb, var(--c, transparent) 12%, transparent);
+    border-radius:99px; padding:4px 11px; font:inherit; font-size:12.5px; font-weight:700}
   .splithint{margin:0 0 6px 6px; font-size:12px; font-weight:700; color:var(--accent)}
   #input{position:relative; z-index:1;}
   #input{flex:1; min-width:0; border:0; background:transparent; resize:none; font:inherit; font-size:16px;
@@ -423,6 +426,7 @@
       <div class="pm-cats" id="pmCats" hidden></div>
     </div>
     <p class="splithint" id="splitHint" hidden></p>
+    <div class="predrow" id="predRow" hidden><button type="button" class="predtag" id="predTag"></button></div>
     <div class="composer">
       <button class="plus" id="plus" type="button" aria-label="追加メニュー" aria-expanded="false">＋</button>
       <span class="cattag" id="catTag" hidden><span id="catName"></span><input id="catNew" type="text" maxlength="12" placeholder="枝の名前" autocomplete="off"><button type="button" id="catX" aria-label="枝の指定をやめる">×</button></span><span class="brk" aria-hidden="true"></span>
@@ -879,6 +883,11 @@
         return item;
       })
     }, Object.assign({
+      context: {
+        type:"choice",
+        instructions:"入力中の断片の内容そのものが、どの分類の説明に最もよく当てはまるかを選ぶ。",
+        criteria: contextCriteria()
+      },
       thinkingOf: {
         type:"choice",
         instructions:"入力中の人がいま頭に浮かべている可能性が最も高い項目を選ぶ。文字が一致していなくても、同じことを考えているなら選ぶ。入力が枝（分類）の名前なら、その枝の項目を選ぶ。",
@@ -898,7 +907,9 @@
       var one = resolveNode(asChoice(a));
       ids = one ? [one.id] : [];
     }
-    return { ids: ids, dist: dist, recall: readRecall(all, text) };
+    var ca = all.context, cn = asChoice(ca), cd = asDist(ca);
+    var ctxGuess = cn && CONTEXTS.indexOf(cn) >= 0 ? { name:cn, p: cd && typeof cd[cn] === "number" ? cd[cn] : null } : null;
+    return { ids: ids, dist: dist, recall: readRecall(all, text), ctx: ctxGuess };
   }
 
   /* ============================ いつ書いたか ============================ */
@@ -2163,6 +2174,7 @@
 
   /* ============================ 付箋 ============================ */
   var semantic = [], semanticFor = "", semanticNote = "", semanticTs = {}, lastLocalTop = 0;
+  var predCtx = null;   /* 入力中の文がどの枝に入りそうか（Jev の予測） */
   var recallState = null;   /* 探しものとして送った結果。次に打ち始めるまで中心に残す */
   var semTimer = null, semInFlight = null;
 
@@ -2317,6 +2329,7 @@
       .sort(function(a, b){ return nowScore(b) - nowScore(a); }).slice(0, 4);
   }
   function showPicked(picked, text, note, cap){
+    renderPred();
     var meta = {};
     picked.forEach(function(x){ meta[x.n.id] = x.tag || when(x.ts || x.n.createdAt); });
     Mind.highlight(picked.map(function(x){ return x.n.id; }), text, !!semInFlight, note, meta, cap);
@@ -2358,9 +2371,10 @@
       }
       if (input.value.trim() === text){
         semantic = ids; semanticFor = text; semanticNote = noteText; semanticTs = tsById;
+        predCtx = res.ctx ? { text:text, name:res.ctx.name, p:res.ctx.p, jev:true } : null;
       }
     } catch(e){ /* 1段目だけで機能は成立する */ }
-    finally { semInFlight = null; renderFusen(); }
+    finally { semInFlight = null; renderFusen(); renderPred(); }
   }
   function clearFusen(){
     input.style.height = "";
@@ -2369,6 +2383,7 @@
     if ($("clearInput")) $("clearInput").hidden = !input.value;
     clearTimeout(semTimer);
     semantic = []; semanticFor = ""; semanticNote = ""; semanticTs = {}; lastLocalTop = 0; semInFlight = null;
+    if ($("predRow")) $("predRow").hidden = true;
     fusenEl.textContent = ""; Mind.highlight([], "", false);
   }
 
@@ -3133,6 +3148,7 @@
     }
     refreshRaw();
     if (ctx){ r.context = ctx; r.forceCtx = ctx; }
+    else if (predCtx && predCtx.jev && predCtx.text === text && CONTEXTS.indexOf(predCtx.name) >= 0) r.context = predCtx.name;
 
     /* 空行で区切って別々のことを書いていたら、分けて入れ直す */
     var blocks = splitBlocks(text);
@@ -4350,6 +4366,34 @@
     hint.textContent = "✂ " + pv.n + "件に分けて入れます" + (pv.secret ? "（ログイン情報ごと）" : "（空行で分かれます）");
     hint.hidden = false;
   }
+
+  /* ============================ 入りそうな枝の札 ============================ */
+  /* 打っている最中に「趣味 に入りそう」を出す。Jev の予測があればそれ、まだなら近い過去の項目の枝から推す。
+     押すと枝を選び直せる（選んだ枝は入力欄の札になり、その枝に入る） */
+  function guessCtx(text){
+    if (predCtx && predCtx.text === text) return predCtx;
+    var br = branchHit(text); if (br && br.exact) return { text:text, name:br.name, p:null, jev:false };
+    var lm = localMatches(text);
+    if (lm.length && lm[0].score >= 0.9) return { text:text, name:ctxName(lm[0].n.context), p:null, jev:false };
+    return null;
+  }
+  function renderPred(){
+    var row = $("predRow"), text = input.value.trim();
+    if (!row) return;
+    if (catTag || text.length < 2 || scheduleQuery(text) || BRANCH_CMD.test(text)){ row.hidden = true; return; }
+    if (splitPreview(input.value).n > 1){ row.hidden = true; return; }
+    var g = guessCtx(text);
+    if (!g){
+      row.hidden = !(getCfg().key && semInFlight);
+      if (!row.hidden){ $("predTag").textContent = "🏷 入る枝を予測中…"; $("predTag").style.removeProperty("--c"); }
+      return;
+    }
+    var b = $("predTag");
+    b.style.setProperty("--c", Mind.color(g.name));
+    b.textContent = "🏷 " + g.name + " に入" + (g.jev ? "りそう" : "るかも") + " ▾";
+    b.setAttribute("aria-label", g.name + " に入りそうです。タップで枝を選び直す");
+    row.hidden = false;
+  }
   /* ============================ ＋ メニュー（枝を指定して入れる） ============================ */
   /* ＋ → カテゴリー → 枝を選ぶと、入力欄の頭に色つきの札が付く。札の枝に、隣に書いた文を入れる。
      「＋ 新しい枝」を選ぶと札の中に名前を書ける（札だけで送れば枝を作るだけ） */
@@ -4379,12 +4423,12 @@
     el.style.setProperty("--c", isNew ? "var(--accent)" : Mind.color(name));
     $("catName").textContent = isNew ? "" : name;
     $("catNew").hidden = !isNew; $("catNew").value = "";
-    el.hidden = false; closePlus(); el.parentNode.classList.add("tagged");
+    el.hidden = false; closePlus(); el.parentNode.classList.add("tagged"); renderPred();
     input.placeholder = isNew ? "入れる内容（なくても枝だけ作れます）" : name + " に入れること";
     setTimeout(function(){ (isNew ? $("catNew") : input).focus(); }, 30);
   }
   function clearCatTag(){
-    catTag = null; $("catTag").hidden = true; $("catNew").value = ""; $("catTag").parentNode.classList.remove("tagged");
+    catTag = null; $("catTag").hidden = true; $("catNew").value = ""; $("catTag").parentNode.classList.remove("tagged"); renderPred();
     input.placeholder = "いま頭にあること";
   }
 
@@ -4393,6 +4437,7 @@
   input.addEventListener("scroll", function(){ $("inputMirror").scrollTop = input.scrollTop; });
   $("plus").addEventListener("click", function(){ if ($("plusMenu").hidden) openPlus(); else closePlus(); });
   $("pmCat").addEventListener("click", showCatChoices);
+  $("predTag").addEventListener("click", function(){ openPlus(); showCatChoices(); });
   $("catX").addEventListener("click", function(){ clearCatTag(); input.focus(); });
   $("catNew").addEventListener("keydown", function(e){
     if (e.key === "Enter" && !e.isComposing){ e.preventDefault(); input.focus(); }
