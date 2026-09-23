@@ -114,7 +114,9 @@
   .pm-cats{display:flex; flex-wrap:wrap; gap:8px; max-height:40vh; overflow-y:auto}
   .pm-cats button{border:0; border-radius:99px; padding:8px 14px; font:inherit; font-size:14px; font-weight:700; color:#fff; background:var(--c)}
   .pm-cats .pm-new{background:transparent; color:var(--accent); border:1.5px dashed var(--accent)}
-  .composer .mic{flex:none; border-color:transparent; padding:7px 10px}
+  .composer .mic{flex:none; width:34px; height:34px; margin-bottom:2px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--muted);
+    display:inline-flex; align-items:center; justify-content:center}
+  .composer .mic[aria-pressed="true"]{background:var(--open-soft); color:var(--open)}
   .composer .clear{flex:none; width:30px; height:30px; margin-bottom:4px; border:0; border-radius:50%;
     background:var(--surface2); color:var(--muted); font-size:17px; line-height:1; padding:0}
   #fusen:not(:empty){margin-bottom:8px; padding-bottom:4px; border-bottom:1px dashed var(--line)}
@@ -399,7 +401,7 @@
     <div class="composer">
       <button class="plus" id="plus" type="button" aria-label="追加メニュー" aria-expanded="false">＋</button>
       <span class="cattag" id="catTag" hidden><span id="catName"></span><input id="catNew" type="text" maxlength="12" placeholder="枝の名前" autocomplete="off"><button type="button" id="catX" aria-label="枝の指定をやめる">×</button></span>
-      <button class="ghost mic" id="mic" type="button" hidden aria-pressed="false">音声</button>
+      <button class="mic" id="mic" type="button" hidden aria-pressed="false" aria-label="音声で入力"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
       <textarea id="input" rows="1" placeholder="いま頭にあること" aria-label="放り込む内容"></textarea>
       <button class="clear" id="clearInput" type="button" hidden aria-label="入力を全部消す">×</button>
       <button class="primary" id="send" type="button">入れる</button>
@@ -1025,16 +1027,26 @@
     if (n._dueKey !== key){ n._due = computeDue(n); n._dueKey = key; }
     return n._due;
   }
+  /* 日付を読む文。見出しは本文を30字で切ったものが多く、「（28日間）」が「（28日…」になって日付に見えるので、
+     本文と違う見出し（自分で直した見出し）で、切れていないものだけ足す */
+  function dateText(n){
+    var mats = (n.materials || []).map(function(m){ return m.text; }), t = String(n.title || "");
+    var useTitle = t && !/…$/.test(t) && !mats.some(function(m){ return m.indexOf(t) >= 0 || titleOf(m) === t; });
+    return (useTitle ? [t] : []).concat(mats).join("\n") || t.replace(/…$/, "");
+  }
   function computeDue(n){
-    var text = zen2han([n.title].concat((n.materials || []).map(function(m){ return m.text; })).join("\n"));
+    var text = zen2han(dateText(n));
     var bd = new Date(startOfDay(n.createdAt || n.updatedAt || Date.now())), base = bd.getTime(), out = [], m, re;
     function days(k){ var d = new Date(base); d.setDate(d.getDate() + k); return d.getTime(); }
     function kindAfter(idx){ return /^\s*(まで|迄|締め?切り?|〆)/.test(text.slice(idx, idx + 6)) ? "deadline" : "day"; }
     /* その日付に何があるか。同じ行の日付より後ろ（なければ前）の言葉を短く取る */
     function labelAt(s, e){
       var ls = text.lastIndexOf("\n", s - 1) + 1, le = text.indexOf("\n", e); if (le < 0) le = text.length;
-      var after = text.slice(e, le).replace(/^[\s日(（)）月火水木金土・、,:：\-]+/, "").replace(/\s+/g, " ").trim();
-      var lab = (after || text.slice(ls, s).replace(/[\s・、,:：\-]+$/, "").trim()).replace(/^(まで|迄|締め?切り?|〆)\s*/, "");
+      var DATE_BIT = /[〜~～\-－ー]?\s*\d{1,2}\s*[\/月]\s*\d{1,2}\s*日?|[（(][^）)]*\d[^）)]*[）)]|\d{1,2}\s*日間?/g;
+      var after = text.slice(e, le).replace(DATE_BIT, " ").replace(/^[\s日(（)）月火水木金土・、,:：\-〜~～]+/, "").replace(/\s+/g, " ").trim();
+      var before = text.slice(ls, s).replace(DATE_BIT, " ").replace(/[\s・、,:：\-〜~～]+$/, "").trim();
+      var lab = (after || before).replace(/^(まで|迄|締め?切り?|〆)\s*/, "");
+      if (!lab){ var first = text.split("\n")[0].replace(DATE_BIT, " ").replace(/\s+/g, " ").trim(); if (first && ls > 0) lab = first; }
       return lab.length > 12 ? lab.slice(0, 12) + "…" : lab;
     }
     function monthDay(mo, da){
@@ -1077,6 +1089,16 @@
     });
     re = /(\d{1,3})日後/g;
     while ((m = re.exec(text))) out.push({ at:days(+m[1]), kind:"day" });
+    /* 「開始の14日前までに申請」：書いてある一番早い日付から数えて締め切りにする */
+    re = /(\d{1,3})\s*日前(?:まで|迄)?に?/g;
+    var anchors = out.filter(function(x){ return x.at > base; }).map(function(x){ return x.at; }).sort(function(a, b){ return a - b; });
+    while ((m = re.exec(text))){
+      if (!anchors.length) break;
+      var dl = new Date(anchors[0]); dl.setDate(dl.getDate() - +m[1]);
+      var le2 = text.indexOf("\n", re.lastIndex); if (le2 < 0) le2 = text.length;
+      var what = text.slice(re.lastIndex, le2).replace(/^[\sにはを]+/, "").trim();
+      out.push({ at:dl.getTime(), kind:"deadline", label: (what || "締め切り").slice(0, 12) });
+    }
     re = /(来週)?の?([月火水木金土日])曜/g;
     while ((m = re.exec(text))){
       var wd = "日月火水木金土".indexOf(m[2]), cur = bd.getDay();
@@ -1219,7 +1241,7 @@
     if (typeof r.time === "string" && /^\d{1,2}:\d{2}$/.test(r.time)) o.time = r.time;
     return o;
   }
-  function nodeRepeatText(n){ return [n.title].concat((n.materials || []).map(function(m){ return m.text; })).join("\n"); }
+  function nodeRepeatText(n){ return dateText(n); }
   /* 書いてある文字から読めればそれを、読めなければ Jev が選んだものを使う。今日・次の回も付ける */
   function repeatOf(n){
     var key = (n.updatedAt || 0) + "|" + dayKey();
@@ -4261,6 +4283,7 @@
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     var mic = $("mic"), rec = null, on = false;
+    var MIC_ICON = mic.innerHTML, MIC_STOP = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>';
     mic.hidden = false;
     mic.addEventListener("click", function(){
       if (on){ try{ rec.stop(); }catch(e){} return; }
@@ -4272,8 +4295,8 @@
         for (var i=0;i<ev.results.length;i++) t += ev.results[i][0].transcript;
         input.value = base + t; renderFusen(); scheduleSemantic();
       };
-      rec.onstart = function(){ on = true; mic.setAttribute("aria-pressed","true"); mic.textContent = "停止"; };
-      rec.onend   = function(){ on = false; mic.setAttribute("aria-pressed","false"); mic.textContent = "音声"; };
+      rec.onstart = function(){ on = true; mic.setAttribute("aria-pressed","true"); mic.setAttribute("aria-label","音声入力を止める"); mic.innerHTML = MIC_STOP; };
+      rec.onend   = function(){ on = false; mic.setAttribute("aria-pressed","false"); mic.setAttribute("aria-label","音声で入力"); mic.innerHTML = MIC_ICON; };
       rec.onerror = function(){ note("音声入力が使えませんでした。", "warn"); };
       try { rec.start(); } catch(e){ note("音声入力を開始できませんでした。", "warn"); }
     });
