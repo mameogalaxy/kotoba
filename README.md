@@ -335,6 +335,8 @@ Jev の `isMaterial` / `isAnswer` には「日付や時刻が同じだけでは�
 - App Store のリンクは App Store の商品ページなので、それだけでは App Store が開く。番号でわからなければ、リンクの中のアプリ名か、見出しがアプリ名そのもののときはその名前で引く。YouTube・X・Instagram・LINE・TikTok・Gmail・
   Google マップ・Spotify・Slack・Discord・Facebook・Netflix・Chrome・Notion・Threads・ChatGPT・Claude・Google は
   アプリを直接開くアドレス（`youtube://` など）がわかっているので、「▶ YouTube を開く」を先に出す。アプリが入っていなければ開けない
+- 直接開くアドレスがないアプリ（ウエルシア・トモズなど）は「▶ ショートカットで開く」を出す。iPhone の「ショートカット」で
+  見出しから作った名前（「ウェルシアアプリ」なら「ウェルシアを開く」）のショートカットを作り、「Appを開く」を1つ入れておけば開く
 - メモに `youtube://` のようなアプリのアドレスを書いても、押して開ける（`javascript:`・`data:` などは開かない）
 - URL の中の `pass`・`token` などの文字では、パスワード扱いにしない
 - 隠したメモの中のリンクは、Face ID で表示している間だけ出る

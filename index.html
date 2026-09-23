@@ -335,6 +335,7 @@
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .link:active{opacity:.7}
   .link.app{background:var(--accent); color:var(--on-accent)}
+  .link-hint{flex-basis:100%; margin:2px 2px 0; font-size:12px}
   .chip-x{cursor:pointer; font:inherit}
   .secret{border:1px dashed var(--line); border-radius:var(--radius); padding:12px 13px; margin-bottom:12px; background:var(--surface)}
   .secret .primary{margin-top:10px}
@@ -1652,7 +1653,7 @@
       });
     }, function(){ return n.title; });
     var lk = nodeLinks(n);
-    if (lk.length) sheetBody.appendChild(linkRow(lk, n.title));
+    if (lk.length) sheetBody.appendChild(linkRow(lk, n.title, true));
     if (sheetNote && sheetNote.id === n.id){
       var sn = document.createElement("p"); sn.id = "sheetNoteEl"; sn.className = "sheet-note" + (sheetNote.bad ? " bad" : "");
       if (sheetNote.busy){ var pl = document.createElement("span"); pl.className = "pulse"; sn.appendChild(pl); }
@@ -1993,7 +1994,7 @@
     "585027354":["Google マップ","comgooglemaps://"], "324684580":["Spotify","spotify://"], "618783545":["Slack","slack://"],
     "985746746":["Discord","discord://"], "284882215":["Facebook","fb://"], "363590051":["Netflix","nflx://"],
     "535886823":["Chrome","googlechrome://"], "1232780281":["Notion","notion://"], "6446901002":["Threads","barcelona://"],
-    "6448311069":["ChatGPT","chatgpt://"], "6473753684":["Claude","claude://"], "284815942":["Google","google://"]
+    "6448311069":["ChatGPT","chatgpt://"], "6473753684":["Claude","claude://"], "284815942":["Google","google://"], "1435783608":["PayPay","paypay://"]
   };
   /* 国ごとに App Store の番号が違うことがあるので、番号でわからなければリンクの前後に書いたアプリ名で引く */
   /* slug: リンクの中の名前（/app/tiktok/id… の tiktok）。title: 見出し。見出しはアプリ名で始まるときだけ使う */
@@ -2033,6 +2034,7 @@
     var host = x.hostname.replace(/^www\./, ""); return LINK_NAMES[host] || host;
   }
   function linkLabel(x){
+    if (/^shortcuts:$/.test(x.protocol)){ var sn = new URLSearchParams(x.search).get("name"); if (sn) return "「" + sn + "」を実行"; }
     if (!/^https?:$/.test(x.protocol)) return schemeName(x) + " を開く";
     var host = x.hostname.replace(/^www\./, ""), path = (x.pathname + x.search).replace(/\/$/, "");
     var name = LINK_NAMES[host];
@@ -2040,10 +2042,25 @@
     return s.length > 42 ? s.slice(0, 42) + "…" : s;
   }
   /* 押すと別のタブで開く。App Store のリンクは iPhone では App Store アプリが開く */
-  function linkRow(links, context){
-    var box = document.createElement("div"); box.className = "links";
+  /* 専用のアドレスがないアプリは、iPhone の「ショートカット」で「Appを開く」だけのショートカットを作れば開ける。
+     名前は見出しから「〇〇を開く」（「アプリ」は外す） */
+  function shortcutNameFor(title){
+    var t = String(title || "").replace(/^[🔗🔒\s]+/, "").split(/[\s　]/)[0].replace(/(アプリ|app)$/i, "").trim();
+    return t && t.length <= 20 ? t + "を開く" : "";
+  }
+  function linkRow(links, context, withHint){
+    var box = document.createElement("div"), hintName = ""; box.className = "links";
     links.forEach(function(x){
       var web = /^https?:$/.test(x.protocol), ap = appOf(x, context);
+      if (!ap && web && /(^|\.)apps\.apple\.com$/.test(x.hostname)){
+        var sc = shortcutNameFor(context);
+        if (sc){
+          var so = document.createElement("a"); so.className = "link app"; so.href = "shortcuts://run-shortcut?name=" + encodeURIComponent(sc);
+          so.textContent = "▶ ショートカットで開く";
+          so.addEventListener("click", function(e){ e.stopPropagation(); });
+          box.appendChild(so); hintName = hintName || sc;
+        }
+      }
       /* App Store のリンクで、開き方がわかっているアプリなら「アプリを開く」を先に出す */
       if (ap){
         var o = document.createElement("a"); o.className = "link app"; o.href = ap[1];
@@ -2057,6 +2074,11 @@
       a.addEventListener("click", function(e){ e.stopPropagation(); });
       box.appendChild(a);
     });
+    if (withHint && hintName){
+      var h = document.createElement("p"); h.className = "hint link-hint";
+      h.textContent = "このアプリは直接開くアドレスがないので、iPhoneの「ショートカット」アプリで「" + hintName + "」という名前のショートカットを作り、中に「Appを開く」を1つだけ入れてください。";
+      box.appendChild(h);
+    }
     return box;
   }
   function ctxName(c){ return CONTEXTS.indexOf(c) >= 0 ? c : "その他"; }
