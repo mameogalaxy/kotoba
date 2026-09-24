@@ -2510,7 +2510,7 @@
     return "kanji";
   }
   function buildVocab(){
-    var sig = nodes.map(function(n){ return n.id + ":" + (n.updatedAt || 0); }).join("|");
+    var sig = CONTEXTS.join(",") + "#" + nodes.map(function(n){ return n.id + ":" + (n.updatedAt || 0); }).join("|");
     if (sig === vocabSig) return vocab;
     vocabSig = sig;
     var map = {};
@@ -2521,6 +2521,14 @@
           var e = map[w] || (map[w] = { word:w, kind:scriptOf(w), count:0, last:0 });
           e.count++; e.last = Math.max(e.last, n.updatedAt || 0);
         });
+      });
+    });
+    /* カテゴリー名（枝の名前）も候補に入れる。ふつうの言葉より少し上に出す */
+    CONTEXTS.forEach(function(c){
+      (String(c || "").match(WORD_RE) || []).concat([c]).forEach(function(w){
+        if (!w || w.length > 30 || w === "その他") return;
+        var e = map[w] || (map[w] = { word:w, kind:scriptOf(w), count:0, last:0 });
+        e.count += 3;
       });
     });
     vocab = Object.keys(map).map(function(k){ return map[k]; })
@@ -2634,6 +2642,10 @@
     });
     var j = kana ? wordJev[kata] : roma ? wordJev["r:" + roma] : null;
     if (j) j.forEach(function(x){ add(x.word, 1.5 + x.p, x.p); });
+    var jk = tok.kind === "hira" && wordJev["r:" + t];
+    if (jk) jk.forEach(function(x){ add(x.word, 1.5 + x.p, x.p); });
+    /* ひらがなで選んだ漢字も覚えておく */
+    if (tok.kind === "hira") Object.keys(al).forEach(function(w){ if (scriptOf(w) === "kanji") add(w, 2 + al[w]); });
     return Object.keys(got).map(function(k){ return got[k]; }).sort(function(a, b){ return b.sc - a.sc; }).slice(0, 6);
   }
 
@@ -2684,7 +2696,9 @@
   function scheduleWordJev(el){
     clearTimeout(wordTimer);
     var tok = tailToken(el);
-    if (tok && tok.kind === "latin") return scheduleRomaJev(tok, el);
+    if (tok && tok.kind === "latin"){ var rh = romaToHira(tok.text); if (tok.text.length >= 3 && rh) scheduleKanjiJev(tok.text, rh, el); return; }
+    /* ひらがなで打ちかけ（りょう）なら、漢字の語（料理）も Jev に探させる */
+    if (tok && tok.kind === "hira" && tok.text.length >= 2) scheduleKanjiJev(tok.text, tok.text, el);
     if (!tok || !(tok.kind === "kata" || tok.kind === "hira") || tok.text.length < 2 || !getCfg().key) return;
     var kata = toKata(tok.text);
     if (wordJev[kata]) return;
@@ -2711,19 +2725,23 @@
 
   /* ローマ字で打ちかけた言葉（ryori）が、単語帳のどの日本語（料理）の読みかを Jev に選ばせる。
      漢字の読みは端末では分からないため。パスワードらしい文を打っているときは送らない */
-  function scheduleRomaJev(tok, el){
-    var roma = romaToHira(tok.text);
-    if (!roma || tok.text.length < 3 || !getCfg().key || wordJev["r:" + roma]) return;
+  var kanjiTimer = null;
+  function scheduleKanjiJev(typed, roma, el){
+    clearTimeout(kanjiTimer);
+    if (!roma || !getCfg().key || wordJev["r:" + roma]) return;
     if (detectSecret((el || input).value).hit) return;
     var ja = buildVocab().filter(function(v){ return v.kind === "kanji"; }).slice(0, 200);
     if (!ja.length) return;
-    wordTimer = setTimeout(async function(){
+    var isRoma = /^[a-z]/i.test(typed), tok = { text: typed };
+    kanjiTimer = setTimeout(async function(){
       var criteria = {}; criteria[NONE] = "どれにも当たらない";
       ja.forEach(function(v){ criteria[v.word] = null; });
       try {
-        var res = await jev({ ローマ字で打ちかけ: tok.text, ひらがなにすると: roma }, { word: {
+        var res = await jev(isRoma ? { ローマ字で打ちかけ: tok.text, ひらがなにすると: roma } : { ひらがなで打ちかけ: roma }, { word: {
           type:"choice",
-          instructions:"英語キーボードのローマ字で日本語を打ちかけている。「" + tok.text + "」（ひらがなにすると「" + roma + "」。ローマ字では伸ばす音の「う」などが抜けることが多い）が、次のどの語の読みの書き始めかを選ぶ。読みがこれで始まる語を選ぶ。どれにも当たらなければ「" + NONE + "」。",
+          instructions:(isRoma
+            ? "英語キーボードのローマ字で日本語を打ちかけている。「" + tok.text + "」（ひらがなにすると「" + roma + "」。ローマ字では伸ばす音の「う」などが抜けることが多い）"
+            : "ひらがなで打ちかけている「" + roma + "」") + "が、次のどの語の読みの書き始めかを選ぶ。読みがこれで始まる語を選ぶ。どれにも当たらなければ「" + NONE + "」。",
           criteria: criteria
         }});
         var a = answersOf(res).word, d = asDist(a), out = [];
@@ -4564,8 +4582,8 @@
     }
     /* 今の天気と気温を先に、今日の最高は赤の↑、最低は青の↓ */
     var t = wx.today, nw = wx.now, c = WX_CODES[nw && nw.code != null ? nw.code : t.code] || ["", ""];
-    /* 祝日名が出ている日は幅が足りないので、天気は絵文字だけにする */
-    el.appendChild(document.createTextNode(c[0] + (hn ? "" : c[1]) + " "));
+    /* 天気は絵文字だけ（「晴れ時々くもり」は長いので）。言葉は読み上げ用の説明とタップで出す */
+    el.appendChild(document.createTextNode(c[0] + " "));
     if (nw){ var cur = document.createElement("span"); cur.className = "t-now"; cur.textContent = nw.temp + "°"; el.appendChild(cur); el.appendChild(document.createTextNode(" ")); }
     var hi = document.createElement("span"); hi.className = "t-hi"; hi.textContent = "↑" + t.max + "°"; el.appendChild(hi);
     el.appendChild(document.createTextNode(" "));
