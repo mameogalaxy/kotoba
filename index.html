@@ -1687,12 +1687,12 @@
     }
     else liveEdit(ht, true, function(v){
       if (v === n.title) return;
-      editNode(n, function(){
-        var old = n.title;
-        n.title = v;
-        /* 見出しと同じ文章の材料は、いっしょに直す（「今日シフト作成」だけの項目など） */
-        (n.materials || []).forEach(function(m){ if (m.text === old) m.text = v; });
-      });
+      /* 見出しだけを変える。材料はそのまま、振り分け直しもしない（名前を付け直したいだけのことが多い） */
+      var d = detectSecret(v);
+      if (d.hit){ n.title = v; hideNode(n, true); return; }
+      n.title = v; n.titleCustom = true; put(n);
+      sheetNote = { id:n.id, text:"見出しを変えました（材料はそのままです）。" };
+      refreshSheet(n);
     }, function(){ return n.title; });
     var lk = nodeLinks(n);
     if (lk.length) sheetBody.appendChild(linkRow(lk, n.title, true));
@@ -1822,7 +1822,7 @@
             var old = m.text;
             m.text = v;
             /* 見出しがこの材料から作られていたなら、見出しも作り直す */
-            if (n.title === old || n.title === titleOf(old)) n.title = titleOf(v);
+            if (!n.titleCustom && (n.title === old || n.title === titleOf(old))) n.title = titleOf(v);
           });
         }, function(){ return m.text; });
         var foot = document.createElement("div"); foot.className = "mat-foot";
