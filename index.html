@@ -66,6 +66,15 @@
     max-width:660px; margin:0 auto; padding:env(safe-area-inset-top,0px) 16px 0}
 
   .top{background:var(--bg); padding-block:6px 0; flex:none}
+  /* 引っぱって更新：上端で下に引くと出る丸。離すと読み込み直す */
+  .ptr{position:absolute; left:50%; top:calc(env(safe-area-inset-top,0px) + 4px); z-index:30; display:flex; align-items:center; gap:6px;
+    padding:6px 12px; border-radius:999px; background:var(--surface); color:var(--ink2); border:1px solid var(--line); font-size:12.5px; font-weight:600;
+    box-shadow:0 2px 10px rgba(0,0,0,.18); pointer-events:none; opacity:0; transform:translate(-50%, -60px); white-space:nowrap}
+  .ptr.back{transition:transform .25s ease, opacity .25s ease}
+  .ptr .ar{display:inline-block; transition:transform .2s ease}
+  .ptr.ready .ar{transform:rotate(180deg)}
+  .ptr.busy .ar{animation:ptrspin .8s linear infinite}
+  @keyframes ptrspin{to{transform:rotate(360deg)}}
   /* キーボードが出ている間は上の段を隠してマップを広くする。下端の余白も要らない */
   .kb .top{display:none}
   .kb .dock{padding-bottom:6px}
@@ -405,6 +414,7 @@
     </div>
   </div>
 
+  <div class="ptr" id="ptr" aria-hidden="true"><span class="ar">↓</span><span id="ptrText">引っぱって更新</span></div>
   <div class="mapwrap" id="mapView">
     <div class="stage" id="stage"></div>
   </div>
@@ -4842,6 +4852,73 @@
       judgeToday();
     }
   });
+  /* 引っぱって更新：マップ・一覧のいちばん上で下に引いて離すと、アプリを読み込み直す。
+     ホーム画面のアプリには Safari の引っぱって更新がないので自前で持つ。
+     書きかけの入力は消えないよう、読み込み直す前に sessionStorage に預けて戻す */
+  (function(){
+    var PTR_KEY = "nou.ptr.v1", el = $("ptr"), txt = $("ptrText"), TH = 70;
+    try {
+      var kept = sessionStorage.getItem(PTR_KEY);
+      if (kept !== null){
+        sessionStorage.removeItem(PTR_KEY);
+        if (kept && !input.value){ input.value = kept; input.dispatchEvent(new Event("input")); }
+        note("最新の状態に更新しました");
+      }
+    } catch(e){}
+    var y0 = 0, x0 = 0, box = null, dy = 0, pulling = false, decided = false, busy = false;
+    function paint(){
+      var d = Math.min(dy, 140);
+      el.style.opacity = Math.min(1, d / 40);
+      el.style.transform = "translate(-50%, " + (d * 0.6 - 40) + "px)";
+      var ready = dy >= TH;
+      el.classList.toggle("ready", ready);
+      txt.textContent = ready ? "離すと更新" : "引っぱって更新";
+    }
+    function reset(){
+      el.classList.add("back"); el.classList.remove("ready");
+      el.style.opacity = 0; el.style.transform = "translate(-50%, -60px)";
+      setTimeout(function(){ el.classList.remove("back"); }, 260);
+    }
+    function start(e){
+      if (busy || e.touches.length !== 1 || document.documentElement.classList.contains("kb")) { box = null; return; }
+      box = e.currentTarget;
+      if (box.scrollTop > 0){ box = null; return; }
+      y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; dy = 0; pulling = false; decided = false;
+    }
+    function move(e){
+      if (!box) return;
+      var t = e.touches[0], ddy = t.clientY - y0, ddx = t.clientX - x0;
+      if (!decided){
+        if (Math.abs(ddy) < 8 && Math.abs(ddx) < 8) return;
+        decided = true;
+        /* 横向き・上向き・途中までスクロールしていたら何もしない */
+        pulling = ddy > 0 && Math.abs(ddy) > Math.abs(ddx) && box.scrollTop <= 0;
+        if (!pulling){ box = null; return; }
+      }
+      if (!pulling) return;
+      e.preventDefault();
+      dy = Math.max(0, ddy * 0.55); paint();
+    }
+    function end(){
+      if (!box) return;
+      box = null;
+      if (!pulling) return;
+      pulling = false;
+      if (dy < TH){ reset(); return; }
+      busy = true; el.classList.remove("ready"); el.classList.add("busy");
+      el.style.opacity = 1; el.style.transform = "translate(-50%, 8px)"; txt.textContent = "更新中…"; el.querySelector(".ar").textContent = "↻";
+      try { sessionStorage.setItem(PTR_KEY, input.value || ""); } catch(e){}
+      setTimeout(function(){ location.reload(); }, 150);
+    }
+    ["mapView", "listView"].forEach(function(id){
+      var b = $(id);
+      b.addEventListener("touchstart", start, { passive: true });
+      b.addEventListener("touchmove", move, { passive: false });
+      b.addEventListener("touchend", end);
+      b.addEventListener("touchcancel", function(){ if (box && pulling) reset(); box = null; pulling = false; });
+    });
+  })();
+
   if (!getCfg().key) setTimeout(openCfg, 350);
 })();
 </script>
