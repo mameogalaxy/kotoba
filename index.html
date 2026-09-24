@@ -336,6 +336,7 @@
   .sheet-bar{display:flex; justify-content:space-between; align-items:center; padding-block:12px; position:sticky; top:0; background:var(--bg)}
   .sheet-bar .x{background:transparent; border:0; color:var(--muted); font-size:20px; line-height:1; padding:4px 6px}
   .sheet-body{overflow-y:auto}
+  .sheet-words{padding:6px 2px 2px}
   .sheet h2{font-family:"Shippori Mincho",serif; font-weight:600; font-size:19px; margin:0 0 10px; line-height:1.55; text-wrap:balance}
   .kv{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px}
   .block-label{font-size:11px; letter-spacing:.1em; color:var(--muted); margin:20px 0 8px; font-weight:500}
@@ -1926,6 +1927,15 @@
       ta.className = "box add-mat"; ta.rows = 2; ta.id = "addMat";
       ta.placeholder = "ここに書いて「足す」で 材料" + ((n.materials || []).length + 1) + " になります";
       sheetBody.appendChild(ta);
+      /* 下の入力欄と同じ予測変換を、この欄のすぐ下に出す */
+      var wb = document.createElement("div"); wb.className = "wordbar sheet-words"; wb.hidden = true; wb.setAttribute("aria-label", "入力の候補");
+      sheetBody.appendChild(wb);
+      ta.addEventListener("input", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); keepInView(addRow); });
+      ta.addEventListener("compositionend", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); });
+      ta.addEventListener("click", function(){ renderWordsFor(ta, wb); });
+      ta.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== ta){ wb.hidden = true; wb.textContent = ""; } }, 150); });
+      /* キーボードが出て画面が縮んだあと、書いている欄と「足す」ボタンが見える位置まで送る */
+      ta.addEventListener("focus", function(){ keepInView(addRow, 380); keepInView(addRow, 750); });
       var addRow = document.createElement("div"); addRow.className = "sheet-actions"; addRow.style.marginTop = "8px";
       var addB = document.createElement("button"); addB.type = "button"; addB.className = "ghost"; addB.textContent = "＋ 材料を足す";
       addB.onclick = function(){
@@ -2006,6 +2016,18 @@
   var sheetNote = null, pendingFlash = null, sheetDirty = false, focusAddMat = false, branchFormFor = null;
 
   function autoGrow(el){ el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+  /* 詳細画面の中で、el の下端が見えるところまでスクロールする（キーボードで狭くなったあと用） */
+  function keepInView(el, delay){
+    setTimeout(function(){
+      if (!el || !el.isConnected) return;
+      var box = el.parentElement;
+      while (box && !(box.scrollHeight > box.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+      if (!box) return;
+      var r = el.getBoundingClientRect(), b = box.getBoundingClientRect(), pad = 12;
+      if (r.bottom > b.bottom - pad) box.scrollTop += r.bottom - b.bottom + pad;
+      else if (r.top < b.top + pad) box.scrollTop -= b.top + pad - r.top;
+    }, delay || 0);
+  }
   /* 表示している文字そのものを入力欄にして、タップした場所から直せるようにする。
      外をタップするかキーボードの「完了」で保存する */
   function liveEdit(el, singleLine, onSave, current){
@@ -2523,8 +2545,11 @@
       .replace(/[whaeiouy]/g, "").replace(/(.)\1+/g, "$1");
   }
 
-  function tailToken(){
-    var before = input.value.slice(0, input.selectionStart == null ? input.value.length : input.selectionStart);
+  /* 予測変換を出している欄。ふだんは下の入力欄、詳細画面で材料を足しているときはその欄 */
+  var wordTarget = null;
+  function tailToken(el){
+    el = el || input;
+    var before = el.value.slice(0, el.selectionStart == null ? el.value.length : el.selectionStart);
     var m = before.match(TAIL_RE);
     return m ? { text:m[1], kind:scriptOf(m[1]) } : null;
   }
@@ -2553,7 +2578,11 @@
 
   function renderWordbar(){
     if (document.getElementById("mic") && $("mic").getAttribute("aria-pressed") === "true"){ $("wordbar").hidden = true; return; }
-    var bar = $("wordbar"), tok = tailToken();
+    renderWordsFor(input, $("wordbar"));
+  }
+  function renderWordsFor(el, bar){
+    wordTarget = { el:el, bar:bar };
+    var tok = tailToken(el);
     bar.textContent = "";
     if (!tok || tok.text.length < 1){ bar.hidden = true; return; }
     var list = suggestWords(tok);
@@ -2566,32 +2595,33 @@
       /* キーボードを閉じないよう、押した瞬間に入力欄のフォーカスを奪わせない */
       b.addEventListener("pointerdown", function(e){ e.preventDefault(); });
       b.addEventListener("mousedown", function(e){ e.preventDefault(); });
-      b.addEventListener("click", function(){ applyWord(tok, x.word); });
+      b.addEventListener("click", function(){ applyWord(tok, x.word, el); });
       bar.appendChild(b);
     });
   }
 
-  function applyWord(tok, word){
-    var pos = input.selectionStart == null ? input.value.length : input.selectionStart;
-    var before = input.value.slice(0, pos), after = input.value.slice(pos);
+  function applyWord(tok, word, el){
+    el = el || input;
+    var pos = el.selectionStart == null ? el.value.length : el.selectionStart;
+    var before = el.value.slice(0, pos), after = el.value.slice(pos);
     if (before.slice(-tok.text.length) !== tok.text) return;
     var head = before.slice(0, before.length - tok.text.length) + word;
-    input.value = head + after;
-    try { input.setSelectionRange(head.length, head.length); } catch(e){}
+    el.value = head + after;
+    try { el.setSelectionRange(head.length, head.length); } catch(e){}
     if (tok.kind !== scriptOf(word)){
       var key = toKata(tok.text);
       aliases[key] = aliases[key] || {};
       aliases[key][word] = (aliases[key][word] || 0) + 1;
       saveAliases();
     }
-    input.focus();
-    input.dispatchEvent(new Event("input"));
+    el.focus();
+    el.dispatchEvent(new Event("input"));
   }
 
   /* 覚えた組み合わせも音の骨組みも当たらないかなは、Jev に単語帳から選ばせる */
-  function scheduleWordJev(){
+  function scheduleWordJev(el){
     clearTimeout(wordTimer);
-    var tok = tailToken();
+    var tok = tailToken(el);
     if (!tok || !(tok.kind === "kata" || tok.kind === "hira") || tok.text.length < 2 || !getCfg().key) return;
     var kata = toKata(tok.text);
     if (wordJev[kata]) return;
@@ -2610,7 +2640,8 @@
         if (d) Object.keys(d).forEach(function(k){ if (k !== NONE && criteria.hasOwnProperty(k) && d[k] >= 0.2) out.push({ word:k, p:d[k] }); });
         else { var c = asChoice(a); if (c && c !== NONE && criteria.hasOwnProperty(c)) out.push({ word:c, p:0.6 }); }
         wordJev[kata] = out.sort(function(x, y){ return y.p - x.p; }).slice(0, 3);
-        renderWordbar();
+        if (wordTarget && wordTarget.el !== input){ if (document.activeElement === wordTarget.el) renderWordsFor(wordTarget.el, wordTarget.bar); }
+        else renderWordbar();
       } catch(e){ wordJev[kata] = []; }
     }, 250);
   }
