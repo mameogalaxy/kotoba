@@ -179,7 +179,10 @@
   .viewbar{display:flex; align-items:center; gap:6px; padding-block:6px 8px; border-bottom:1px solid var(--line)}
   .viewbar .tabs{border:0; padding:0; flex:1}
   .daybar{display:flex; align-items:center; gap:7px; flex:1; min-width:0; white-space:nowrap; overflow:hidden}
-  .daybar .day{font-weight:700; font-size:15px; color:var(--ink)}
+  .daybar .day{display:flex; flex-direction:column; line-height:1.1; font-weight:700; font-size:15px; color:var(--ink); flex:none}
+  .daybar .day .yr{font-size:10px; font-weight:600; color:var(--muted); letter-spacing:.02em; white-space:nowrap}
+  .daybar .day.hol .md, .daybar .day.hol .yr{color:#e25b4f}
+  .daybar .day.sat .md{color:#3f8fd6}
   .daybar .t-now{font-size:15px; font-weight:800; color:var(--ink)}
   .daybar .t-hi{color:#e25b4f; font-weight:700}
   .daybar .t-lo{color:#3f8fd6; font-weight:700}
@@ -4304,6 +4307,45 @@
   }
 
 
+
+  /* ============================ 祝日 ============================ */
+  /* 日本の祝日を計算で出す（決まった日・ハッピーマンデー・春分秋分・振替休日・国民の休日） */
+  var holCache = {};
+  function holidaysOf(y){
+    if (holCache[y]) return holCache[y];
+    var h = {};
+    function put(m, d, name){ h[m + "-" + d] = name; }
+    function nthMonday(m, n){ var d = new Date(y, m - 1, 1), off = (8 - d.getDay()) % 7; return 1 + off + (n - 1) * 7; }
+    put(1, 1, "元日");
+    put(1, nthMonday(1, 2), "成人の日");
+    put(2, 11, "建国記念の日");
+    if (y >= 2020) put(2, 23, "天皇誕生日");
+    var k = y - 1980;
+    put(3, Math.floor(20.8431 + 0.242194 * k - Math.floor(k / 4)), "春分の日");
+    put(4, 29, "昭和の日");
+    put(5, 3, "憲法記念日"); put(5, 4, "みどりの日"); put(5, 5, "こどもの日");
+    put(7, nthMonday(7, 3), "海の日");
+    put(8, 11, "山の日");
+    put(9, nthMonday(9, 3), "敬老の日");
+    put(9, Math.floor(23.2488 + 0.242194 * k - Math.floor(k / 4)), "秋分の日");
+    put(10, nthMonday(10, 2), "スポーツの日");
+    put(11, 3, "文化の日"); put(11, 23, "勤労感謝の日");
+    /* 振替休日：祝日が日曜なら、次の祝日でない日 */
+    Object.keys(h).forEach(function(key){
+      var p = key.split("-"), d = new Date(y, +p[0] - 1, +p[1]);
+      if (d.getDay() !== 0) return;
+      do { d.setDate(d.getDate() + 1); } while (h[(d.getMonth() + 1) + "-" + d.getDate()]);
+      if (d.getFullYear() === y) h[(d.getMonth() + 1) + "-" + d.getDate()] = "振替休日";
+    });
+    /* 国民の休日：祝日にはさまれた平日 */
+    for (var t = new Date(y, 0, 2); t.getFullYear() === y; t.setDate(t.getDate() + 1)){
+      var key2 = (t.getMonth() + 1) + "-" + t.getDate(); if (h[key2] || t.getDay() === 0) continue;
+      var a = new Date(t), b = new Date(t); a.setDate(a.getDate() - 1); b.setDate(b.getDate() + 1);
+      if (h[(a.getMonth() + 1) + "-" + a.getDate()] && h[(b.getMonth() + 1) + "-" + b.getDate()] && a.getFullYear() === y && b.getFullYear() === y) h[key2] = "国民の休日";
+    }
+    return (holCache[y] = h);
+  }
+  function holidayName(d){ return holidaysOf(d.getFullYear())[(d.getMonth() + 1) + "-" + d.getDate()] || ""; }
   /* ============================ 今日の日付と天気 ============================ */
   /* 天気は Open-Meteo（キー不要）から。位置は最初に「天気を表示」を押したときだけ聞き、約1kmに丸めて覚える */
   var WX_KEY = "nou.wx.v1", wx = null, wxBusy = false;
@@ -4328,7 +4370,15 @@
   }
   function renderDay(){
     var d = new Date();
-    $("dayDate").textContent = (d.getMonth() + 1) + "/" + d.getDate() + "(" + DOW[d.getDay()] + ")";
+    /* 上に小さく年（祝日なら名前も）、下に月日。祝日と日曜は赤、土曜は青 */
+    var hn = holidayName(d), dd = $("dayDate");
+    dd.textContent = "";
+    var top = document.createElement("span"); top.className = "yr"; top.textContent = d.getFullYear() + (hn ? " · " + hn : "");
+    var md = document.createElement("span"); md.className = "md"; md.textContent = (d.getMonth() + 1) + "/" + d.getDate() + "(" + DOW[d.getDay()] + ")";
+    dd.appendChild(top); dd.appendChild(md);
+    dd.classList.toggle("hol", !!hn || d.getDay() === 0);
+    dd.classList.toggle("sat", !hn && d.getDay() === 6);
+    dd.setAttribute("aria-label", d.getFullYear() + "年" + (d.getMonth() + 1) + "月" + d.getDate() + "日 " + DOW[d.getDay()] + "曜日" + (hn ? " " + hn : ""));
     var el = $("wx"), ok = wx && wx.today && wx.today.day === dayKey();
     el.textContent = "";
     if (wxBusy || !ok){
@@ -4337,7 +4387,8 @@
     }
     /* 今の天気と気温を先に、今日の最高は赤の↑、最低は青の↓ */
     var t = wx.today, nw = wx.now, c = WX_CODES[nw && nw.code != null ? nw.code : t.code] || ["", ""];
-    el.appendChild(document.createTextNode(c[0] + c[1] + " "));
+    /* 祝日名が出ている日は幅が足りないので、天気は絵文字だけにする */
+    el.appendChild(document.createTextNode(c[0] + (hn ? "" : c[1]) + " "));
     if (nw){ var cur = document.createElement("span"); cur.className = "t-now"; cur.textContent = nw.temp + "°"; el.appendChild(cur); el.appendChild(document.createTextNode(" ")); }
     var hi = document.createElement("span"); hi.className = "t-hi"; hi.textContent = "↑" + t.max + "°"; el.appendChild(hi);
     el.appendChild(document.createTextNode(" "));
