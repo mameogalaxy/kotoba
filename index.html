@@ -684,6 +684,11 @@
         var m0 = (n.materials || []).slice().sort(function(a, b){ return a.at - b.at; })[0];
         n.title = titleOf(m0 && linksIn(m0.text).length ? m0.text : n.title);
       }
+      /* 【】を見出しにする前に入れた項目も、見出しを自分で変えていなければ【】の中身にそろえる */
+      if (!n.secret && !n.titleCustom && n.materials && n.materials.length){
+        var f0 = n.materials.slice().sort(function(a, b){ return a.at - b.at; })[0], bt = bracketTitle(f0.text);
+        if (bt && n.title !== bt && n.title === plainTitle(f0.text)) n.title = bt;
+      }
       if (!n.secret) fixKind(n);
       if (RENAMED[n.context] && CONTEXTS.indexOf(n.context) < 0 && CONTEXTS.indexOf(RENAMED[n.context]) >= 0)
         n.context = RENAMED[n.context];
@@ -2037,9 +2042,21 @@
   }
   function flushSheet(){ if (sheetDirty && openId && !editingInSheet()){ sheetDirty = false; openSheet(openId); } }
   /* 見出しにはリンクを入れない。リンクだけのメモは「App Store」のようにリンク先の名前にする */
+  /* 【】で囲んだところがあれば、その中身だけを見出しにする（「明日までに【見積もり】出す」→「見積もり」） */
+  var BRACKET_TITLE_RE = /【\s*([^【】\n]*?\S[^【】\n]*?)\s*】/;
+  function bracketTitle(text){
+    var m = String(text || "").match(BRACKET_TITLE_RE);
+    if (!m) return "";
+    var t = m[1].replace(URL_RE, " ").replace(/[ \t\u3000]+/g, " ").trim();
+    return t.length > 30 ? t.slice(0, 30) + "…" : t;
+  }
   function titleOf(text){
-    var raw = String(text || "").trim();
-    text = raw.replace(URL_RE, " ").replace(/[ \t\u3000]+/g, " ").replace(/\s*\n\s*/g, " ").trim();
+    var raw = String(text || "").trim(), bt = bracketTitle(raw);
+    return bt || plainTitle(raw);
+  }
+  function plainTitle(raw){
+    raw = String(raw || "").trim();
+    var text = raw.replace(URL_RE, " ").replace(/[ \t\u3000]+/g, " ").replace(/\s*\n\s*/g, " ").trim();
     if (!text){ var l = linksIn(raw); text = l.length ? linkName(l[0]) : raw; }
     return text.length > 30 ? text.slice(0, 30) + "…" : text;
   }
