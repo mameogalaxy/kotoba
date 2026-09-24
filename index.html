@@ -2527,6 +2527,56 @@
       .sort(function(a, b){ return b.count - a.count || b.last - a.last; });
     return vocab;
   }
+  /* 英語キーボードのローマ字（ryori）を、ひらがな（りょり）に直す。ローマ字として読めなければ "" */
+  var ROMA_TABLE = (function(){
+    var t = {}, V = "aiueo", H = "あいうえお";
+    for (var i = 0; i < 5; i++) t[V[i]] = H[i];
+    var rows = { k:"かきくけこ", s:"さしすせそ", t:"たちつてと", n:"なにぬねの", h:"はひふへほ", m:"まみむめも", r:"らりるれろ",
+      g:"がぎぐげご", z:"ざじずぜぞ", d:"だぢづでど", b:"ばびぶべぼ", p:"ぱぴぷぺぽ", y:"やいゆいぇよ", w:"わうぃうぇを" };
+    Object.keys(rows).forEach(function(c){
+      var r = rows[c];
+      if (c === "y"){ t.ya = "や"; t.yu = "ゆ"; t.yo = "よ"; t.ye = "いぇ"; return; }
+      if (c === "w"){ t.wa = "わ"; t.wo = "を"; t.wi = "うぃ"; t.we = "うぇ"; return; }
+      for (var i = 0; i < 5; i++) t[c + V[i]] = r[i];
+    });
+    var YO = { k:"き", s:"し", t:"ち", c:"ち", n:"に", h:"ひ", m:"み", r:"り", g:"ぎ", z:"じ", j:"じ", d:"ぢ", b:"び", p:"ぴ" };
+    Object.keys(YO).forEach(function(c){ t[c + "ya"] = YO[c] + "ゃ"; t[c + "yu"] = YO[c] + "ゅ"; t[c + "yo"] = YO[c] + "ょ"; t[c + "ye"] = YO[c] + "ぇ"; });
+    ["sh", "ch", "j"].forEach(function(c){
+      var b = c === "j" ? "じ" : c === "sh" ? "し" : "ち";
+      t[c + "a"] = b + "ゃ"; t[c + "u"] = b + "ゅ"; t[c + "o"] = b + "ょ"; t[c + "e"] = b + "ぇ";
+    });
+    Object.assign(t, { shi:"し", chi:"ち", tsu:"つ", fu:"ふ", ji:"じ", si:"し", ti:"ち", tu:"つ", hu:"ふ", zi:"じ", di:"ぢ", du:"づ",
+      fa:"ふぁ", fi:"ふぃ", fe:"ふぇ", fo:"ふぉ", va:"ゔぁ", vi:"ゔぃ", vu:"ゔ", ve:"ゔぇ", vo:"ゔぉ", thi:"てぃ", dhi:"でぃ", tsa:"つぁ",
+      xtu:"っ", ltu:"っ", xtsu:"っ", ltsu:"っ", "n'":"ん", nn:"ん", "-":"ー" });
+    return t;
+  })();
+  function romaToHira(s){
+    s = String(s || "").toLowerCase();
+    if (!/^[a-z'\-]+$/.test(s)) return "";
+    var out = "", i = 0;
+    while (i < s.length){
+      var c = s.charAt(i), nx = s.charAt(i + 1);
+      /* 同じ子音が2つ続けば小さい「っ」（kitte → きって） */
+      if (c === nx && /[bcdfghjkmpqrstvwxyz]/.test(c)){ out += "っ"; i++; continue; }
+      if (c === "t" && nx === "c"){ out += "っ"; i++; continue; }
+      /* 子音の前・最後の n は「ん」 */
+      if (c === "n" && nx !== "n" && !/[aiueoy']/.test(nx)){ out += "ん"; i++; continue; }
+      var hit = "";
+      for (var L = 4; L >= 1; L--){ var k = s.substr(i, L); if (ROMA_TABLE[k]){ hit = k; break; } }
+      if (!hit){
+        /* 打ちかけの最後の子音（ryor の r）は捨てる */
+        if (i >= s.length - 2 && /^[bcdfghjkmpqrstvwxyz]{1,2}$/.test(s.slice(i)) && out) return out;
+        return "";
+      }
+      out += ROMA_TABLE[hit]; i += hit.length;
+    }
+    return out;
+  }
+  function toHira(t){ return String(t).replace(/[ァ-ヶ]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) - 0x60); }); }
+  /* ローマ字では伸ばす音を打たないことが多い（ryori = りょうり）ので、長音・「う」「お」の伸ばしをそろえてから比べる */
+  function foldLong(h){
+    return toHira(h).replace(/ー/g, "").replace(/([おこそとのほもよろごぞどぼぽょ])[うお]/g, "$1").replace(/([うくすつぬふむゆるぐずづぶぷゅ])う/g, "$1").replace(/([えけせてねへめれげぜでべぺ])い/g, "$1");
+  }
   function toKata(t){ return String(t).replace(/[ぁ-ゖ]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) + 0x60); }); }
 
   var KANA = "アイウエオカキクケコガギグゲゴサシスセソザジズゼゾタチツテトダヂヅデドナニヌネノハヒフヘホバビブベボパピプペポマミムメモヤユヨラリルレロワヲンヴァィゥェォャュョッヮー";
@@ -2559,11 +2609,21 @@
   function suggestWords(tok){
     var t = tok.text, kana = tok.kind === "kata" || tok.kind === "hira", kata = toKata(t);
     var sk = kana ? skeleton(kataRoma(kata)) : "", al = aliases[kata] || {}, got = {};
+    /* 英語キーボードのローマ字（ryori）なら、読みが合う日本語も出す */
+    var roma = tok.kind === "latin" && t.length >= 2 ? romaToHira(t) : "", rf = roma ? foldLong(roma) : "", ral = {};
+    if (roma){
+      var rk = toKata(roma);
+      Object.keys(aliases).forEach(function(k){ if (k.indexOf(rk) === 0) Object.keys(aliases[k]).forEach(function(w){ ral[w] = Math.max(ral[w] || 0, aliases[k][w] / (k === rk ? 1 : 2)); }); });
+    }
     function add(w, sc, p){ if (w !== t && (!got[w] || got[w].sc < sc)) got[w] = { word:w, sc:sc, p:p }; }
     buildVocab().forEach(function(v, rank){
       var w = v.word, bonus = Math.min(0.5, v.count / 20) - rank / 5000;
       if (tok.kind === "latin"){
         if (v.kind === "latin" && w.toLowerCase().indexOf(t.toLowerCase()) === 0 && w.length > t.length) add(w, 1 + bonus);
+        if (roma){
+          if (ral[w]) add(w, 2 + ral[w]);
+          else if (v.kind === "kata" && rf.length >= 2 && foldLong(w).indexOf(rf) === 0) add(w, 1.1 + bonus);
+        }
       } else if (kana){
         if (v.kind === "kata" && w.indexOf(kata) === 0 && (w !== kata || tok.kind === "hira")) add(w, 1.2 + bonus);
         if (v.kind === "latin"){
@@ -2572,7 +2632,7 @@
         }
       } else if (v.kind === "kanji" && w.indexOf(t) === 0 && w.length > t.length) add(w, 1 + bonus);
     });
-    var j = kana && wordJev[kata];
+    var j = kana ? wordJev[kata] : roma ? wordJev["r:" + roma] : null;
     if (j) j.forEach(function(x){ add(x.word, 1.5 + x.p, x.p); });
     return Object.keys(got).map(function(k){ return got[k]; }).sort(function(a, b){ return b.sc - a.sc; }).slice(0, 6);
   }
@@ -2610,7 +2670,8 @@
     el.value = head + after;
     try { el.setSelectionRange(head.length, head.length); } catch(e){}
     if (tok.kind !== scriptOf(word)){
-      var key = toKata(tok.text);
+      var rh = tok.kind === "latin" ? romaToHira(tok.text) : "";
+      var key = rh ? toKata(rh) : toKata(tok.text);
       aliases[key] = aliases[key] || {};
       aliases[key][word] = (aliases[key][word] || 0) + 1;
       saveAliases();
@@ -2623,6 +2684,7 @@
   function scheduleWordJev(el){
     clearTimeout(wordTimer);
     var tok = tailToken(el);
+    if (tok && tok.kind === "latin") return scheduleRomaJev(tok, el);
     if (!tok || !(tok.kind === "kata" || tok.kind === "hira") || tok.text.length < 2 || !getCfg().key) return;
     var kata = toKata(tok.text);
     if (wordJev[kata]) return;
@@ -2644,6 +2706,33 @@
         if (wordTarget && wordTarget.el !== input){ if (document.activeElement === wordTarget.el) renderWordsFor(wordTarget.el, wordTarget.bar); }
         else renderWordbar();
       } catch(e){ wordJev[kata] = []; }
+    }, 250);
+  }
+
+  /* ローマ字で打ちかけた言葉（ryori）が、単語帳のどの日本語（料理）の読みかを Jev に選ばせる。
+     漢字の読みは端末では分からないため。パスワードらしい文を打っているときは送らない */
+  function scheduleRomaJev(tok, el){
+    var roma = romaToHira(tok.text);
+    if (!roma || tok.text.length < 3 || !getCfg().key || wordJev["r:" + roma]) return;
+    if (detectSecret((el || input).value).hit) return;
+    var ja = buildVocab().filter(function(v){ return v.kind === "kanji"; }).slice(0, 200);
+    if (!ja.length) return;
+    wordTimer = setTimeout(async function(){
+      var criteria = {}; criteria[NONE] = "どれにも当たらない";
+      ja.forEach(function(v){ criteria[v.word] = null; });
+      try {
+        var res = await jev({ ローマ字で打ちかけ: tok.text, ひらがなにすると: roma }, { word: {
+          type:"choice",
+          instructions:"英語キーボードのローマ字で日本語を打ちかけている。「" + tok.text + "」（ひらがなにすると「" + roma + "」。ローマ字では伸ばす音の「う」などが抜けることが多い）が、次のどの語の読みの書き始めかを選ぶ。読みがこれで始まる語を選ぶ。どれにも当たらなければ「" + NONE + "」。",
+          criteria: criteria
+        }});
+        var a = answersOf(res).word, d = asDist(a), out = [];
+        if (d) Object.keys(d).forEach(function(k){ if (k !== NONE && criteria.hasOwnProperty(k) && d[k] >= 0.2) out.push({ word:k, p:d[k] }); });
+        else { var c = asChoice(a); if (c && c !== NONE && criteria.hasOwnProperty(c)) out.push({ word:c, p:0.6 }); }
+        wordJev["r:" + roma] = out.sort(function(x, y){ return y.p - x.p; }).slice(0, 3);
+      } catch(e){ wordJev["r:" + roma] = []; }
+      if (wordTarget && wordTarget.el !== input){ if (document.activeElement === wordTarget.el) renderWordsFor(wordTarget.el, wordTarget.bar); }
+      else renderWordbar();
     }, 250);
   }
 
