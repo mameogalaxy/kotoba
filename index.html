@@ -926,13 +926,13 @@
   function todOf(h){ return h < 4 ? "深夜" : h < 7 ? "早朝" : h < 11 ? "朝" : h < 14 ? "昼" : h < 17 ? "午後" : h < 19 ? "夕方" : "夜"; }
   function pad2(n){ return (n < 10 ? "0" : "") + n; }
   function when(ts, withClock){
-    var d = new Date(ts);
-    return (d.getMonth()+1) + "/" + d.getDate() + "(" + DOW[d.getDay()] + ")"
+    var d = new Date(ts), y = d.getFullYear() !== new Date().getFullYear() ? d.getFullYear() + "/" : "";
+    return y + (d.getMonth()+1) + "/" + d.getDate() + "(" + DOW[d.getDay()] + ")"
       + (withClock ? " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) : "") + " " + todOf(d.getHours());
   }
   function whenLong(ts){
     var d = new Date(ts);
-    return (d.getMonth()+1) + "月" + d.getDate() + "日（" + DOW[d.getDay()] + "）" + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + " · " + todOf(d.getHours());
+    return d.getFullYear() + "年" + (d.getMonth()+1) + "月" + d.getDate() + "日（" + DOW[d.getDay()] + "）" + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + " · " + todOf(d.getHours());
   }
 
   /* 1段目: 「先週の夜」「月曜」「9/15」などの手がかりを手元で読む */
@@ -1096,7 +1096,8 @@
       var DATE_BIT = /[〜~～\-－ー]?\s*\d{1,2}\s*[\/月]\s*\d{1,2}\s*日?|[（(][^）)]*\d[^）)]*[）)]|\d{1,2}\s*日間?/g;
       var after = text.slice(e, le).replace(DATE_BIT, " ").replace(/^[\s日(（)）月火水木金土・、,:：\-〜~～]+/, "").replace(/\s+/g, " ").trim();
       var before = text.slice(ls, s).replace(DATE_BIT, " ").replace(/[\s・、,:：\-〜~～]+$/, "").trim();
-      var lab = (after || before).replace(/^(まで|迄|締め?切り?|〆)\s*/, "");
+      var lab = (after || before).replace(/^(まで|迄|締め?切り?|〆)\s*/, "").replace(/^[にのではを]\s*/, "")
+        .replace(/[（(【「『\s]+$/, "").replace(/^[）)】」』\s]+/, "").replace(/[（(][^）)]*$/, "").replace(/^[^（(]*[）)]$/, function(x){ return x.replace(/[）)]$/, ""); }).trim();
       if (!lab){ var first = text.split("\n")[0].replace(DATE_BIT, " ").replace(/\s+/g, " ").trim(); if (first && ls > 0) lab = first; }
       return lab.length > 12 ? lab.slice(0, 12) + "…" : lab;
     }
@@ -1292,13 +1293,19 @@
     if (typeof r.time === "string" && /^\d{1,2}:\d{2}$/.test(r.time)) o.time = r.time;
     return o;
   }
-  function nodeRepeatText(n){ return dateText(n); }
+  /* 繰り返しを読む文。5行以上の長いメモ（家計簿など）は、見出しと最初の2行だけで読む（本文の1行でメモ全体を繰り返しにしない） */
+  function nodeRepeatText(n){
+    var t = dateText(n), lines = t.split("\n").filter(function(l){ return l.trim(); });
+    return lines.length >= 5 ? [String(n.title || "")].concat(lines.slice(0, 2)).join("\n") : t;
+  }
   /* 書いてある文字から読めればそれを、読めなければ Jev が選んだものを使う。今日・次の回も付ける */
   function repeatOf(n){
     var key = (n.updatedAt || 0) + "|" + dayKey();
     if (n._repKey === key) return n._rep;
     n._repKey = key;
-    var r = parseRepeat(nodeRepeatText(n)) || validRepeat(n.repeat);
+    if (n.noRepeat){ n._rep = null; return null; }
+    var rt = nodeRepeatText(n), long = rt !== dateText(n);
+    var r = parseRepeat(rt) || (long || isReference(n) ? null : validRepeat(n.repeat));
     if (!r){ n._rep = null; return null; }
     var anchor = startOfDay(n.createdAt || n.updatedAt || Date.now()), today = startOfDay(Date.now()), next = null;
     for (var k = 0; k < 400; k++){
@@ -1334,7 +1341,10 @@
         criteria:{ "1月":null, "2月":null, "3月":null, "4月":null, "5月":null, "6月":null, "7月":null, "8月":null, "9月":null, "10月":null, "11月":null, "12月":null, "指定なし":null } }
     };
   }
-  function needsRepeatJudge(text){ return REPEAT_CUE.test(zen2han(text)) && !parseRepeat(text); }
+  function needsRepeatJudge(text){
+    if (String(text || "").split("\n").filter(function(l){ return l.trim(); }).length >= 5) return false;
+    return REPEAT_CUE.test(zen2han(text)) && !parseRepeat(text);
+  }
   function readRepeat(a, text){
     var kind = asChoice(a.repeatKind); if (!kind || kind === "繰り返さない") return null;
     var dow = DOWS.indexOf(String(asChoice(a.repeatDow) || "").charAt(0)), dayS = asChoice(a.repeatDay) || "";
@@ -1354,7 +1364,7 @@
   }
 
   /* 時刻表・営業時間のような「見返すための情報」。時刻がいくつも並ぶものも含む */
-  var REFERENCE_RE = /時刻表|ダイヤ|営業時間|受付時間|開館時間|開店時間|診療時間|料金表|メニュー|運行|発車|始発|終電/;
+  var REFERENCE_RE = /時刻表|ダイヤ|営業時間|受付時間|開館時間|開店時間|診療時間|料金表|メニュー|運行|発車|始発|終電|家計簿|予算|固定費|変動費|一覧|明細|料金/;
   function isReference(n){
     var t = dateText(n), times = (zen2han(t).match(/\d{1,2}\s*[:：]\s*\d{2}/g) || []).length;
     return REFERENCE_RE.test(t) || times >= 3;
@@ -1370,7 +1380,7 @@
   /* Jev が「事実メモ」と言っても、予定の形ならコードで「予定」にする */
   function fixKind(n){
     if ((n.kind === "事実メモ" || !n.kind) && looksScheduled(n)) n.kind = "予定";
-    else if (n.kind === "予定" && isReference(n) && !looksScheduled(n)) n.kind = "事実メモ";
+    else if (n.kind === "予定" && (isReference(n) || n.noRepeat) && !looksScheduled(n)) n.kind = "事実メモ";
   }
 
   /* 「予定」「今週の予定」「明日の予定」と打ったら、これからの予定を近い順に出す */
@@ -1755,7 +1765,12 @@
       setTimeout(function(){ nameIn.focus(); nameIn.select(); }, 60);
     }
     var ti = todayInfo(n), extra = [], rpt = repeatOf(n);
-    if (rpt) extra.push("🔁 " + rpt.label + (rpt.next ? " · 次 " + (rpt.next.days === 0 ? "今日" : rpt.next.days === 1 ? "明日" : when(rpt.next.at).split(" ")[0]) : "") + (rpt.age ? "（" + rpt.age + "）" : ""));
+    if (rpt) extra.push({ text: "🔁 " + rpt.label + (rpt.next ? " · 次 " + (rpt.next.days === 0 ? "今日" : rpt.next.days === 1 ? "明日" : when(rpt.next.at).split(" ")[0]) : "") + (rpt.age ? "（" + rpt.age + "）" : "") + " ✕",
+      label: "繰り返しを外す", act: function(){
+        if (!window.confirm("この項目の繰り返し（" + rpt.label + "）を外しますか？")) return;
+        n.noRepeat = true; delete n.repeat; delete n.doneOn; fixKind(n); put(n); pinToday();
+        sheetNote = { id:n.id, text:"繰り返しを外しました。" }; openSheet(n.id);
+      } });
     if (ti && !ti.rep){
       if (ti.due){
         extra.push("期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
@@ -1774,7 +1789,7 @@
       if (!t) return;
       if (typeof t === "object"){
         var bt = document.createElement("button"); bt.type = "button"; bt.className = "chip chip-x"; bt.textContent = t.text;
-        bt.setAttribute("aria-label", "今日のことから外す"); bt.onclick = t.act; kv.appendChild(bt); return;
+        bt.setAttribute("aria-label", t.label || "今日のことから外す"); bt.onclick = t.act; kv.appendChild(bt); return;
       }
       var c = document.createElement("span"); c.className = "chip"; c.textContent = t; kv.appendChild(c);
     });
@@ -3385,6 +3400,7 @@
       notToday: x.notToday ? true : undefined,
       ctxLocked: x.ctxLocked ? true : undefined,
       titleCustom: x.titleCustom ? true : undefined,
+      noRepeat: x.noRepeat ? true : undefined,
       secret: x.secret && x.enc && typeof x.enc.ct === "string" ? true : undefined,
       enc: x.secret && x.enc && typeof x.enc.ct === "string"
         ? { v:1, k:String(x.enc.k || ""), epk:x.enc.epk, iv:String(x.enc.iv || ""), ct:x.enc.ct } : undefined
