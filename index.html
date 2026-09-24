@@ -1616,8 +1616,17 @@
   }
 
   /* ============================ 保存 ============================ */
+  /* 枝を使った時刻（入れた・開いた・直した）。マップでは最近使った枝ほど中心の近くに置く */
+  var CATUSE_KEY = "nou.catuse.v1", catUse = {};
+  try { catUse = JSON.parse(localStorage.getItem(CATUSE_KEY) || "{}") || {}; } catch(e){ catUse = {}; }
+  function useCat(name){
+    if (!name) return;
+    catUse[name] = Date.now();
+    try { localStorage.setItem(CATUSE_KEY, JSON.stringify(catUse)); } catch(e){}
+  }
   function put(n){
     n.updatedAt = Date.now();
+    useCat(n.context);
     var i = nodes.findIndex(function(x){ return x.id === n.id; });
     if (i >= 0) nodes[i] = n; else nodes.push(n);
     saveNodes(); render();
@@ -1692,6 +1701,7 @@
   /* ============================ 詳細 ============================ */
   function openSheet(id){
     var n = find(id); if (!n) return;
+    if (openId !== id) useCat(n.context);
     openId = id;
     $("sheetStatus").textContent = n.status === "open" ? "宙ぶらりん" : (n.status === "done" ? "解決済み" : "メモ");
     sheetBody.textContent = "";
@@ -2228,7 +2238,7 @@
   function closeSheet(){
     if (editingInSheet()) document.activeElement.blur();
     sheet.hidden = true; openId = null; sheetNote = null; sheetDirty = false;
-    refreshBranch();
+    refreshBranch(); Mind.refresh();
     if (pendingFlash){ Mind.flash(pendingFlash.id, pendingFlash.label); pendingFlash = null; }
   }
 
@@ -3590,6 +3600,7 @@
   }
   function openBranch(name, index){
     branchSheet = branchSheet || $("branchSheet");
+    if (branchOpen !== name) useCat(name);
     branchOpen = name;
     var color = Mind.color(name), items = branchNodes(name), box = $("brCards");
     $("brName").textContent = name; $("brName").style.setProperty("--c", color);
@@ -3619,7 +3630,7 @@
     $("brPrev").disabled = !n || i === 0; $("brNext").disabled = !n || i >= n - 1;
   }
   function branchGo(d){ var box = $("brCards"); box.scrollTo({ left: (branchIndex() + d) * branchStep(), behavior:"smooth" }); }
-  function closeBranch(){ if (branchSheet) branchSheet.hidden = true; branchOpen = null; }
+  function closeBranch(){ if (branchSheet) branchSheet.hidden = true; branchOpen = null; Mind.refresh(); }
   /* 詳細を閉じたら、見ていたカードの位置のまま枝のパネルを作り直す */
   function refreshBranch(){
     if (!branchOpen || !branchSheet || branchSheet.hidden) return;
@@ -3880,8 +3891,12 @@
 
     function score(n){ return Math.min(100, (n.status === "open" ? baseScore(n) : Math.round(baseScore(n) * 0.55)) + todayBoost(n)); }
     function catOf(n){ return CONTEXTS.indexOf(n.context) >= 0 ? n.context : "その他"; }
+    /* 枝を最後に使った時刻。開いた記録と、中の項目を入れた・直した時刻のうち新しいほう */
+    function lastUse(name, items){
+      return items.reduce(function(t, n){ return Math.max(t, n.createdAt || 0, n.updatedAt || 0); }, catUse[name] || 0);
+    }
     function signature(){
-      return CONTEXTS.join(",") + "#" + nodes.map(function(n){
+      return CONTEXTS.join(",") + "#" + JSON.stringify(catUse) + "#" + nodes.map(function(n){
         return n.id + ":" + (n.updatedAt||0) + ":" + n.status + ":" + n.context + ":" + (n.title||"") + ":" + todayTag(n) + ":" + todayBoost(n);
       }).join("|");
     }
@@ -3971,8 +3986,9 @@
       });
       var cats = Object.keys(groups).map(function(c){
         var items = groups[c].slice().sort(function(x,y){ return score(y) - score(x); });
-        return { name:c, items:items, total: items.reduce(function(t,n){ return t + score(n) + 5; }, 0) };
-      }).sort(function(x,y){ return y.total - x.total; });
+        return { name:c, items:items, used: lastUse(c, groups[c]), total: items.reduce(function(t,n){ return t + score(n) + 5; }, 0) };
+      }).sort(function(x,y){ return (y.used - x.used) || (y.total - x.total); });
+      /* 最近使った枝ほど中心の近く（左上→右上→左下→右下の順に、各すみの内側から外へ）。しばらく使っていない枝は外側になる */
 
       var Q = { TL:[], TR:[], BL:[], BR:[] }, ORDER = ["TL","TR","BL","BR"];
       cats.forEach(function(c, i){ Q[ORDER[i % 4]].push(c); });
