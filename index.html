@@ -2259,8 +2259,9 @@
 
   function closeSheet(){
     if (editingInSheet()) document.activeElement.blur();
+    var was = openId && find(openId);
     sheet.hidden = true; openId = null; sheetNote = null; sheetDirty = false;
-    refreshBranch(); Mind.refresh();
+    refreshBranch(); if (!branchOpen) Mind.refresh(was && was.context);
     if (pendingFlash){ Mind.flash(pendingFlash.id, pendingFlash.label); pendingFlash = null; }
   }
 
@@ -3661,7 +3662,7 @@
     $("brPrev").disabled = !n || i === 0; $("brNext").disabled = !n || i >= n - 1;
   }
   function branchGo(d){ var box = $("brCards"); box.scrollTo({ left: (branchIndex() + d) * branchStep(), behavior:"smooth" }); }
-  function closeBranch(){ if (branchSheet) branchSheet.hidden = true; branchOpen = null; Mind.refresh(); }
+  function closeBranch(){ var was = branchOpen; if (branchSheet) branchSheet.hidden = true; branchOpen = null; Mind.refresh(was); }
   /* 詳細を閉じたら、見ていたカードの位置のまま枝のパネルを作り直す */
   function refreshBranch(){
     if (!branchOpen || !branchSheet || branchSheet.hidden) return;
@@ -3919,6 +3920,9 @@
     var refreshTimer = null;
     var ready = false, laidOut = false, timer = null, rafId = null, wireUntil = 0;
     var hub = { x:0, y:0, d:0, top:0 }, lastH = 0;
+    /* 描き直しのあと、見ていた場所がずれないようにするための前回の位置。
+       中心へ戻すのは、最初に開いたときと、打った文字を消して候補が消えたときだけ */
+    var lastWant = {}, lastFocus = false, anchorKey = null;
 
     function score(n){ return Math.min(100, (n.status === "open" ? baseScore(n) : Math.round(baseScore(n) * 0.55)) + todayBoost(n)); }
     function catOf(n){ return CONTEXTS.indexOf(n.context) >= 0 ? n.context : "その他"; }
@@ -3927,7 +3931,8 @@
       return items.reduce(function(t, n){ return Math.max(t, n.createdAt || 0, n.updatedAt || 0); }, catUse[name] || 0);
     }
     function signature(){
-      return CONTEXTS.join(",") + "#" + JSON.stringify(catUse) + "#" + nodes.map(function(n){
+      /* 開いた記録（catUse）は入れない。開いている間は並べ替えず、閉じたとき refresh でまとめて動かす */
+      return CONTEXTS.join(",") + "#" + nodes.map(function(n){
         return n.id + ":" + (n.updatedAt||0) + ":" + n.status + ":" + n.context + ":" + (n.title||"") + ":" + todayTag(n) + ":" + todayBoost(n);
       }).join("|");
     }
@@ -3998,7 +4003,8 @@
     function layout(animate){
       if (!ready || !wrap.clientWidth) return;
       var W = wrap.clientWidth, H = wrap.clientHeight;
-      var focus = cands.length > 0;
+      var focus = cands.length > 0, wasFocus = lastFocus, oldHubY = hub.y;
+      lastFocus = focus;
       var pad = 14, gapCol = 10;
       var colW = Math.floor((W - pad*2 - gapCol) / 2);
       var tight = focus && H < 380;
@@ -4169,13 +4175,20 @@
       laidOut = true;
       animateWires(quiet ? 0 : 720);
 
+      var ak = anchorKey; anchorKey = null;
       if (first) wrap.scrollTop = Math.max(0, hubCy - H/2);
       else if (holding()) setTimeout(placeHold, 760);
       else if (focus){
         var bTop = midTop - 6, bBot = hubY + hubD + candH + 10, bH = bBot - bTop;
         wrap.scrollTo({ top: Math.max(0, bH < H ? bTop - (H - bH)/2 : bTop), behavior: "smooth" });
       }
-      else if (animate) wrap.scrollTo({ top: Math.max(0, hubCy - H/2), behavior: "smooth" });
+      else if (wasFocus) wrap.scrollTo({ top: Math.max(0, hubCy - H/2), behavior: "smooth" });
+      else {
+        /* 「ほか◯件」を開いた・並びが変わったなど：押した枝（なければ中心）が画面の同じ高さに残るようにずらす */
+        var oy = ak && lastWant[ak] ? lastWant[ak].y : oldHubY, ny = ak && want[ak] ? want[ak].y : hub.y, dl = ny - oy;
+        if (Math.abs(dl) > 1) wrap.scrollTo({ top: Math.max(0, wrap.scrollTop + dl), behavior: animate ? "smooth" : "auto" });
+      }
+      lastWant = want;
     }
 
     var hold = null, holdTimer = null, HOLD_MS = 7000;
@@ -4291,7 +4304,7 @@
         if (b){
           if (b.dataset.id){ openSheet(b.dataset.id); return; }
           if (b.dataset.cat && b.classList.contains("mm-cat")){ openBranch(b.dataset.cat); return; }
-          if (b.dataset.cat){ expanded[b.dataset.cat] = !expanded[b.dataset.cat]; layout(true); return; }
+          if (b.dataset.cat){ expanded[b.dataset.cat] = !expanded[b.dataset.cat]; anchorKey = "c:" + b.dataset.cat; layout(true); return; }
         }
         if (e.target.closest(".hub")){
           if (recallState){ recallState = null; renderFusen(); return; }
@@ -4315,7 +4328,8 @@
     return {
       init: init,
       /* 画面の高さが変わったときの描き直し。候補の入れ替え待ち（timer）は消さない */
-      refresh: function(){ clearTimeout(refreshTimer); refreshTimer = setTimeout(function(){ layout(true); }, 120); },
+      /* cat を渡すと、並びが変わってもその枝が画面の同じ高さに来るようにずらす（閉じたあと、いま見ていた枝を見失わない） */
+      refresh: function(cat){ if (cat) anchorKey = "c:" + cat; clearTimeout(refreshTimer); refreshTimer = setTimeout(function(){ layout(true); }, 120); },
       /* 入れた先の項目を見える位置に出して、一瞬光らせる */
       /* 入れた項目の場所を7秒ほど見せ続ける。そのあいだに描き直しが入っても中心へ戻らず、そこに留まる */
       flash: function(id, label){
