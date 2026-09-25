@@ -1710,8 +1710,13 @@
   function openSheet(id){
     var n = find(id); if (!n) return;
     if (openId !== id) useCat(n.context);
-    /* 同じ項目を描き直すときは、見ていた位置を保つ（材料を足しても一番上へ戻らない） */
-    var keepY = openId === id && !sheet.hidden ? [sheetBody.scrollTop, sheetBody.parentElement.scrollTop] : null;
+    /* 同じ項目を描き直すときは、見ていた位置を保つ（材料を足しても一番上へ戻らない）。
+       「材料を足す」欄（なければ下のボタン）が画面の同じ高さに来るように戻す */
+    var keepY = null;
+    if (openId === id && !sheet.hidden){
+      var ak = $("addMat") || sheetBody.querySelector(".sheet-actions:last-child");
+      if (ak) keepY = ak.getBoundingClientRect().top;
+    }
     openId = id;
     $("sheetStatus").textContent = n.status === "open" ? "宙ぶらりん" : (n.status === "done" ? "解決済み" : "メモ");
     sheetBody.textContent = "";
@@ -1986,16 +1991,18 @@
       act.appendChild(done); act.appendChild(hideButton(n)); addDelete(act, n); sheetBody.appendChild(act);
     }
     sheet.hidden = false;
-    if (keepY){ sheetBody.scrollTop = keepY[0]; sheetBody.parentElement.scrollTop = keepY[1]; }
-    /* 足したばかりの材料は、見える位置まで送って少し光らせる */
+    if (keepY !== null){
+      /* 材料の欄は描いた直後はまだ1行ぶんなので、先に中身の高さまで伸ばしてから位置を合わせる */
+      Array.prototype.forEach.call(sheetBody.querySelectorAll("textarea.mat-edit, textarea.title-edit"), autoGrow);
+      var ak2 = $("addMat") || sheetBody.querySelector(".sheet-actions:last-child");
+      var sc = [sheetBody, sheetBody.parentElement].filter(function(x){ return x.scrollHeight > x.clientHeight + 1; })[0];
+      if (ak2 && sc) sc.scrollTop += ak2.getBoundingClientRect().top - keepY;
+    }
+    /* 足したばかりの材料は少し光らせる（位置はそのまま。足した材料は「材料を足す」欄のすぐ上に出る） */
     if (justAddedAt){
       var nm = Array.prototype.filter.call(sheetBody.querySelectorAll(".mat"), function(x){ return x._at === justAddedAt; })[0];
       justAddedAt = 0;
-      if (nm){
-        nm.classList.add("just-added");
-        setTimeout(function(){ try { nm.scrollIntoView({ block: focusAddMat ? "nearest" : "center", behavior:"smooth" }); } catch(e){} }, 60);
-        setTimeout(function(){ nm.classList.remove("just-added"); }, 2600);
-      }
+      if (nm){ nm.classList.add("just-added"); setTimeout(function(){ nm.classList.remove("just-added"); }, 2600); }
     }
   }
   function hideButton(n){
@@ -2114,7 +2121,12 @@
     box.appendChild(p); box.appendChild(go); box.appendChild(no);
     return box;
   }
-  function autoGrow(el){ el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+  /* 一瞬 auto に縮めて高さを測るので、そのあいだに詳細画面のスクロールが上へ詰められないよう位置を戻す */
+  function autoGrow(el){
+    var sc = el.closest && el.closest(".sheet-body"), st = sc ? sc.scrollTop : 0;
+    el.style.height = "auto"; el.style.height = el.scrollHeight + "px";
+    if (sc && sc.scrollTop !== st) sc.scrollTop = st;
+  }
   /* 詳細画面の中で、el の下端が見えるところまでスクロールする（キーボードで狭くなったあと用） */
   function keepInView(el, delay){
     setTimeout(function(){
