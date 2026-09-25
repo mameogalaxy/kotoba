@@ -340,6 +340,7 @@
   .sheet-bar .x{background:transparent; border:0; color:var(--muted); font-size:20px; line-height:1; padding:4px 6px}
   .sheet-body{overflow-y:auto}
   .sheet-words{padding:6px 2px 2px}
+  #sheetWords{flex:none; padding:8px 0 2px; margin-top:4px; border-top:1px solid var(--line); background:var(--bg)}
   .wordbar.empty{visibility:hidden; min-height:var(--wb-h, 42px)}
   .gsearch{text-decoration:none; display:inline-block}
   .mat.just-added{border-left-color:var(--accent); background:var(--accent-soft); border-radius:0 10px 10px 0; transition:background 1.2s ease}
@@ -472,6 +473,7 @@
       <button class="x" id="sheetClose" type="button" aria-label="閉じる">✕</button>
     </div>
     <div class="sheet-body" id="sheetBody"></div>
+    <div class="wordbar sheet-words" id="sheetWords" hidden aria-label="入力の候補"></div>
   </div>
 </div>
 
@@ -1964,12 +1966,11 @@
       ta.placeholder = "ここに書いて「足す」で 材料" + ((n.materials || []).length + 1) + " になります";
       sheetBody.appendChild(ta);
       /* 下の入力欄と同じ予測変換を、この欄のすぐ下に出す */
-      var wb = document.createElement("div"); wb.className = "wordbar sheet-words"; wb.hidden = true; wb.setAttribute("aria-label", "入力の候補");
-      sheetBody.appendChild(wb);
+      var wb = $("sheetWords");
       ta.addEventListener("input", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); keepInView(addRow); });
       ta.addEventListener("compositionend", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); });
       ta.addEventListener("click", function(){ renderWordsFor(ta, wb); });
-      ta.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== ta){ wb.hidden = true; wb.textContent = ""; flushSheet(); } }, 150); });
+      ta.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== ta){ hideSheetWords(); flushSheet(); } }, 150); });
       /* キーボードが出て画面が縮んだあと、書いている欄と「足す」ボタンが見える位置まで送る */
       ta.addEventListener("focus", function(){ renderWordsFor(ta, wb); keepInView(addRow, 380); keepInView(addRow, 750); });
       var addRow = document.createElement("div"); addRow.className = "sheet-actions"; addRow.style.marginTop = "8px";
@@ -2174,6 +2175,12 @@
     return go;
   }
   /* 一瞬 auto に縮めて高さを測るので、そのあいだに詳細画面のスクロールが上へ詰められないよう位置を戻す */
+  /* 詳細画面の候補の段を消す。別の欄へ移っただけなら（そちらが使っているので）消さない */
+  function hideSheetWords(){
+    var wb = $("sheetWords"); if (!wb) return;
+    if (wordTarget && wordTarget.bar === wb && wordTarget.el === document.activeElement && wordTarget.el.isConnected) return;
+    wb.hidden = true; wb.textContent = "";
+  }
   function autoGrow(el){
     var sc = el.closest && el.closest(".sheet-body"), st = sc ? sc.scrollTop : 0;
     el.style.height = "auto"; el.style.height = el.scrollHeight + "px";
@@ -2204,16 +2211,13 @@
       if (e.key === "Escape"){ e.stopPropagation(); el.value = current(); autoGrow(el); el.blur(); }
     });
     /* 直している間も、下の入力欄と同じ予測変換を欄のすぐ下に出す */
-    var wb = null;
-    function words(){
-      if (!wb){ wb = document.createElement("div"); wb.className = "wordbar sheet-words"; wb.setAttribute("aria-label", "入力の候補"); }
-      if (wb.previousSibling !== el && el.parentNode) el.parentNode.insertBefore(wb, el.nextSibling);
-      renderWordsFor(el, wb);
-    }
+    /* 候補は詳細画面のいちばん下（キーボードのすぐ上）に出す。長い材料だと欄の下はキーボードに隠れるため */
+    var wb = $("sheetWords");
+    function words(){ renderWordsFor(el, wb); }
     el.addEventListener("input", function(){ words(); scheduleWordJev(el); });
     el.addEventListener("compositionend", function(){ words(); scheduleWordJev(el); });
     el.addEventListener("focus", words);
-    el.addEventListener("blur", function(){ setTimeout(function(){ if (wb && document.activeElement !== el){ wb.hidden = true; wb.textContent = ""; } }, 150); });
+    el.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== el) hideSheetWords(); }, 150); });
     el.addEventListener("focus", function(){
       /* キーボードが出きってから、直している行が見える位置まで送る */
       setTimeout(function(){ try { el.scrollIntoView({ block:"nearest", behavior:"smooth" }); } catch(e){} }, 380);
@@ -2440,6 +2444,7 @@
   }
 
   function closeSheet(){
+    var sw = $("sheetWords"); if (sw){ sw.hidden = true; sw.textContent = ""; }
     if (editingInSheet()) document.activeElement.blur();
     var was = openId && find(openId);
     sheet.hidden = true; openId = null; sheetNote = null; sheetDirty = false;
