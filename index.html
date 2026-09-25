@@ -2170,6 +2170,12 @@
     var t = String(title || "").replace(/^[🔗🔒\s]+/, "").split(/[\s　]/)[0].replace(/(アプリ|app)$/i, "").trim();
     return t && t.length <= 20 ? t + "を開く" : "";
   }
+  /* Google のリンク（share.google の AI モード共有・www.google.com）は、iPhone だと Google アプリに取られる。
+     Safari で開けば共有から「脳みそに送る」ショートカットで中身を取れるので、x-safari- を付けて Safari で開く（iOS 17 から） */
+  var IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  function viaSafari(x){
+    return IOS && /^https:$/.test(x.protocol) && /^(share\.google|g\.co|(www\.)?google\.(com|co\.jp))$/i.test(x.hostname);
+  }
   function linkRow(links, context, withHint){
     var box = document.createElement("div"), hintName = ""; box.className = "links";
     links.forEach(function(x){
@@ -2192,8 +2198,10 @@
         box.appendChild(o);
       }
       var a = document.createElement("a"); a.className = "link" + (web ? "" : " app"); a.href = x.href;
-      if (web){ a.target = "_blank"; a.rel = "noopener noreferrer"; }
-      a.textContent = web ? "🔗 " + (ap ? "App Store" : linkLabel(x)) + "  ↗" : "▶ " + linkLabel(x);
+      var inSafari = web && !ap && viaSafari(x);
+      if (inSafari) a.href = "x-safari-" + x.href;
+      else if (web){ a.target = "_blank"; a.rel = "noopener noreferrer"; }
+      a.textContent = web ? "🔗 " + (ap ? "App Store" : linkLabel(x)) + (inSafari ? "  ↗ Safari" : "  ↗") : "▶ " + linkLabel(x);
       a.addEventListener("click", function(e){ e.stopPropagation(); });
       box.appendChild(a);
     });

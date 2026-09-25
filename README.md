@@ -359,6 +359,18 @@ Jev の `isMaterial` / `isAnswer` には「日付や時刻が同じだけでは�
 
 ### リンク
 
+- iPhone では Google のリンク（share.google の AI モード共有、www.google.com）を **Safari で開く**（`x-safari-https://`、iOS 17 から）。
+  Google アプリに取られないので、Safari の共有から「脳みそに送る」ショートカット（ページの文字をコピーする）ですぐ中身を取れる。ボタンには「↗ Safari」と出る
+
+**「脳みそに送る」ショートカットの作り方**（AI モードの答えなどを材料に貼るため）
+1. 設定 → アプリ → ショートカット → 詳細 →「スクリプトの実行を許可」をオン
+2. ショートカットで新規作成 →「Webページで JavaScript を実行」を追加し、入力を「ショートカットの入力」にする →
+   一番上の行で「共有シート」から「Safari の Web ページ」を受け取るようにする。中身：
+   `var t = document.title + "\n" + location.href + "\n\n" + document.body.innerText; completion(t.slice(0, 8000));`
+3. 「クリップボードにコピー」「通知を表示」を足す
+4. Safari の共有 →「脳みそに送る」→ アプリの「材料を足す」に貼る（Google アプリからの共有では出ないので、Safari で開く）
+
+
 メモに `https://…` や `www.…` を書くと、押して開けるリンクになる。
 
 - 詳細画面の見出しのすぐ下と、一覧の各行に「🔗 App Store /app/id6473753684 ↗」のようなボタンが出る。別のタブで開き、
