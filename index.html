@@ -340,6 +340,8 @@
   .gsearch{text-decoration:none; display:inline-block}
   .pastebar{margin:4px 0 10px; padding:10px 12px; border:1px solid var(--accent); background:var(--accent-soft); border-radius:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center}
   .pastebar p{margin:0; flex-basis:100%; font-size:13px; color:var(--ink2)}
+  .pastebar .ghost{margin-left:auto; width:34px; height:34px; padding:0; font-size:16px}
+  .mat.just-added{border-left-color:var(--accent); background:var(--accent-soft); border-radius:0 10px 10px 0; transition:background 1.2s ease}
   .sheet h2{font-family:"Shippori Mincho",serif; font-weight:600; font-size:19px; margin:0 0 10px; line-height:1.55; text-wrap:balance}
   .kv{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px}
   .block-label{font-size:11px; letter-spacing:.1em; color:var(--muted); margin:20px 0 8px; font-weight:500}
@@ -1708,6 +1710,8 @@
   function openSheet(id){
     var n = find(id); if (!n) return;
     if (openId !== id) useCat(n.context);
+    /* 同じ項目を描き直すときは、見ていた位置を保つ（材料を足しても一番上へ戻らない） */
+    var keepY = openId === id && !sheet.hidden ? [sheetBody.scrollTop, sheetBody.parentElement.scrollTop] : null;
     openId = id;
     $("sheetStatus").textContent = n.status === "open" ? "宙ぶらりん" : (n.status === "done" ? "解決済み" : "メモ");
     sheetBody.textContent = "";
@@ -1860,7 +1864,7 @@
 
     if ((n.materials||[]).length){
       mats.forEach(function(m){
-        var d = document.createElement("div"); d.className = "mat";
+        var d = document.createElement("div"); d.className = "mat"; d._at = m.at;
         var ta = document.createElement("textarea");
         ta.className = "mat-edit"; ta.rows = 1; ta.value = m.text; ta.spellcheck = false;
         ta.setAttribute("aria-label", "材料（タップして直せます）");
@@ -1957,8 +1961,8 @@
       addB.onclick = function(){
         var v = ta.value.replace(/\s+$/, "").replace(/^\s*\n/, "");
         if (!v.trim()){ ta.focus(); return; }
-        focusAddMat = true;
-        editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:v, at:Date.now() }]); });
+        focusAddMat = true; justAddedAt = Date.now();
+        editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:v, at:justAddedAt }]); });
       };
       addRow.appendChild(addB);
       /* Google（AI モード）で調べに行く。Safari で開くので、共有 →「脳みそに送る」でコピーして戻ると貼り付けを出す */
@@ -1982,6 +1986,17 @@
       act.appendChild(done); act.appendChild(hideButton(n)); addDelete(act, n); sheetBody.appendChild(act);
     }
     sheet.hidden = false;
+    if (keepY){ sheetBody.scrollTop = keepY[0]; sheetBody.parentElement.scrollTop = keepY[1]; }
+    /* 足したばかりの材料は、見える位置まで送って少し光らせる */
+    if (justAddedAt){
+      var nm = Array.prototype.filter.call(sheetBody.querySelectorAll(".mat"), function(x){ return x._at === justAddedAt; })[0];
+      justAddedAt = 0;
+      if (nm){
+        nm.classList.add("just-added");
+        setTimeout(function(){ try { nm.scrollIntoView({ block: focusAddMat ? "nearest" : "center", behavior:"smooth" }); } catch(e){} }, 60);
+        setTimeout(function(){ nm.classList.remove("just-added"); }, 2600);
+      }
+    }
   }
   function hideButton(n){
     var b = document.createElement("button"); b.type = "button"; b.className = "ghost"; b.textContent = "🔒 隠す";
@@ -2037,7 +2052,7 @@
     return b;
   }
 
-  var sheetNote = null, pendingFlash = null, sheetDirty = false, focusAddMat = false, branchFormFor = null;
+  var sheetNote = null, pendingFlash = null, sheetDirty = false, focusAddMat = false, branchFormFor = null, justAddedAt = 0;
 
   /* 「Google で調べる」から戻ってきたら、コピーした内容をその項目の材料に貼れるようにする（30分まで） */
   var PASTE_KEY = "nou.pastefor.v1";
@@ -2054,29 +2069,46 @@
     return (IOS ? "x-safari-" : "") + "https://www.google.com/search?udm=50&q=" + encodeURIComponent(String(q).slice(0, 500));
   }
   /* 「脳みそに送る」でコピーした文から、要らない行を落とす：アドレスだけの行は消し、1行目の「◯◯ - Google 検索」は「🔍 ◯◯」にする */
+  /* AI モードのページなら、AI が返した答えだけを残す（上のタブ・メニューと、下の「フィードバック」などを落とす） */
+  var AI_HEAD = /^\s*AI\s*モードの会話|^\s*AI Mode conversation/i;
+  var AI_STOP = /^\s*(AI\s*(による|の|モードの)?\s*(回答|応答)|AI\s*(は|の回答は)|AI responses|回答が作成|生成\s*AI|フィードバック|良い回答|悪い回答|関連する(質問|検索)|すべて表示$|もっと見る$|質問する$|Google アプリ|ログイン$|プライバシー|利用規約|Ask anything|Feedback)/i;
   function cleanPasted(t){
     var lines = String(t || "").replace(/\r/g, "").split("\n").filter(function(l){ return !/^\s*(https?:\/\/|www\.)\S+\s*$/i.test(l); });
+    var hi = -1;
+    for (var i = 0; i < lines.length; i++){ if (AI_HEAD.test(lines[i])){ hi = i; break; } }
+    if (hi >= 0){
+      var q = (lines[hi].split(/[:：]/).slice(1).join(":") || "").trim(), rest = lines.slice(hi + 1);
+      /* 自分の質問（吹き出し）の繰り返しを飛ばす */
+      while (rest.length && (!rest[0].trim() || (q && rest[0].trim() === q) || /^\s*あなたの入力\s*[:：]/.test(rest[0]))) rest.shift();
+      var end = -1;
+      for (var j = 0; j < rest.length; j++){ if (AI_STOP.test(rest[j])){ end = j; break; } }
+      if (end >= 0) rest = rest.slice(0, end);
+      /* 続けて質問していたら、その質問は「▶ 」で残す */
+      lines = rest.map(function(l){ return l.replace(/^\s*あなたの入力\s*[:：]\s*/, "▶ "); });
+      if (lines.join("").trim()) return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+      lines = String(t || "").split("\n");
+    }
     if (lines.length) lines[0] = lines[0].replace(/^(.+?)\s*[-–—]\s*Google\s*(検索|Search)\s*$/i, "🔍 $1");
     return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
   function clearPasteFor(){ try { localStorage.removeItem(PASTE_KEY); } catch(e){} }
   function pasteBar(n){
     var box = document.createElement("div"); box.className = "pastebar";
-    var p = document.createElement("p"); p.textContent = "Google で調べた内容をコピーしてきましたか？";
-    var go = document.createElement("button"); go.type = "button"; go.className = "primary"; go.textContent = "📋 貼り付けて材料に足す";
-    var no = document.createElement("button"); no.type = "button"; no.className = "ghost"; no.textContent = "やめる";
+    var p = document.createElement("p"); p.hidden = true;
+    var go = document.createElement("button"); go.type = "button"; go.className = "primary"; go.textContent = "📋 調べた内容を材料に貼る";
+    var no = document.createElement("button"); no.type = "button"; no.className = "ghost"; no.textContent = "×"; no.setAttribute("aria-label", "貼らない");
     go.onclick = async function(){
       var t = "";
       /* iPhone では押したあとに出る「ペースト」を押すと読める（勝手には読めない仕組み） */
       try { t = await navigator.clipboard.readText(); } catch(e){ t = ""; }
       t = cleanPasted(t).slice(0, 8000);
       if (!t){
-        p.textContent = "読み込めませんでした。下の欄を長押しして「ペースト」してから「＋ 材料を足す」を押してください。";
+        p.hidden = false; p.textContent = "読み込めませんでした。下の欄を長押しして「ペースト」してから「＋ 材料を足す」を押してください。";
         var el = $("addMat"); if (el) el.focus();
         return;
       }
-      clearPasteFor();
-      editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:t, at:Date.now() }]); });
+      clearPasteFor(); justAddedAt = Date.now();
+      editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:t, at:justAddedAt }]); });
     };
     no.onclick = function(){ clearPasteFor(); box.remove(); };
     box.appendChild(p); box.appendChild(go); box.appendChild(no);
