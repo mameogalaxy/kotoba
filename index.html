@@ -1987,7 +1987,7 @@
       ta.addEventListener("input", function(){ autoGrow(ta); renderWordsFor(ta, wb); scheduleWordJev(ta); keepInView(addRow); });
       ta.addEventListener("compositionend", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); });
       ta.addEventListener("click", function(){ renderWordsFor(ta, wb); });
-      ta.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== ta){ hideSheetWords(); flushSheet(); } }, 150); });
+      ta.addEventListener("blur", function(){ if (ta._refocusing) return; setTimeout(function(){ if (document.activeElement !== ta){ hideSheetWords(); flushSheet(); } }, 150); });
       /* キーボードが出て画面が縮んだあと、書いている欄と「足す」ボタンが見える位置まで送る */
       ta.addEventListener("focus", function(){ renderWordsFor(ta, wb); keepInView(addRow, 380); keepInView(addRow, 750); });
       var addRow = document.createElement("div"); addRow.className = "sheet-actions"; addRow.style.marginTop = "8px";
@@ -2243,12 +2243,13 @@
     el.addEventListener("input", function(){ words(); scheduleWordJev(el); });
     el.addEventListener("compositionend", function(){ words(); scheduleWordJev(el); });
     el.addEventListener("focus", words);
-    el.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== el) hideSheetWords(); }, 150); });
+    el.addEventListener("blur", function(){ if (el._refocusing) return; setTimeout(function(){ if (document.activeElement !== el) hideSheetWords(); }, 150); });
     el.addEventListener("focus", function(){
       /* キーボードが出きってから、直している行が見える位置まで送る */
       setTimeout(function(){ try { el.scrollIntoView({ block:"nearest", behavior:"smooth" }); } catch(e){} }, 380);
     });
     el.addEventListener("blur", function(){
+      if (el._refocusing) return;
       var v = singleLine ? el.value.replace(/\s+/g, " ").trim() : el.value.replace(/\s+$/, "").replace(/^\s*\n/, "");
       if (!v.trim()){ el.value = current(); autoGrow(el); return; }
       onSave(v);
@@ -2899,7 +2900,11 @@
   function applyWord(tok, word, el){
     el = el || input;
     /* 変換中に選んだら、いったん確定させてから置き換える（そのままだと変換中の文字が後から戻ってくる） */
-    if (el._composing){ el.blur(); el._composing = false; }
+    if (el._composing){
+      /* 離れてすぐ戻るだけなので、「直し終わった」扱い（保存・描き直し・候補を消す）にはしない */
+      el._refocusing = true; el.blur(); el._composing = false;
+      setTimeout(function(){ el._refocusing = false; }, 400);
+    }
     var pos = caretOf(el);
     var before = el.value.slice(0, pos), after = el.value.slice(pos);
     if (before.slice(-tok.text.length) !== tok.text) return;
