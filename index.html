@@ -2099,6 +2099,22 @@
         while (k < rest.length && !rest[k].trim()) k++;
         if (k < rest.length && tail.test(rest[k])){ rest = rest.slice(0, c); break; }
       }
+      /* 出典カードのもう一つの形：「note · GeneLab」→ 見出し →「2026/09/19 — 抜き出し…」。
+         日付＋ダッシュで始まる行か、「…」で終わる抜き出しの行があれば、そのかたまりの頭（直前の空行のあと）から下を切る */
+      for (var e2 = 1; e2 < rest.length; e2++){
+        var ln = rest[e2].trim();
+        if (!(/^\d{4}[\/年.]\d{1,2}[\/月.]\d{1,2}日?\s*[—–-]/.test(ln) || (/(…|\.\.\.)$/.test(ln) && ln.length < 120))) continue;
+        var st = e2;
+        while (st > 0 && rest[st - 1].trim() && e2 - st < 3) st--;
+        if (st > 0){ rest = rest.slice(0, st); break; }
+      }
+      /* 文中の出典の印（「note」「+2」のようにサイト名と件数だけの行）を消す */
+      rest = rest.filter(function(l, i2, arr){
+        if (/^\s*\+\d+\s*$/.test(l)) return false;
+        var nx = arr[i2 + 1];
+        if (nx !== undefined && /^\s*\+\d+\s*$/.test(nx) && l.trim().length <= 30 && !/[。、]/.test(l)) return false;
+        return true;
+      });
       /* 続けて質問していたら、その質問は「▶ 」で残す */
       lines = rest.map(function(l){ return l.replace(/^\s*あなたの入力\s*[:：]\s*/, "▶ "); });
       if (lines.join("").trim()) return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -2116,7 +2132,7 @@
       var raw = "";
       /* iPhone では押したあとに出る「ペースト」を押すと読める（勝手には読めない仕組み） */
       try { raw = await navigator.clipboard.readText(); } catch(e){ raw = ""; }
-      var t = cleanPasted(raw).slice(0, 8000);
+      var t = cleanPasted(raw).slice(0, 20000);
       if (!t){ sheetNote = { id:n.id, text:"コピーされた文字がありません。" }; refreshSheet(n); return; }
       if (!looksLikeGoogle(raw) && !window.confirm("コピーされているのは Google のページではないようです。それでも材料に貼りますか？\n\n" + t.slice(0, 80) + (t.length > 80 ? "…" : ""))) return;
       clearPasteFor(); justAddedAt = Date.now();
