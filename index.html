@@ -2749,9 +2749,13 @@
 
   /* 予測変換を出している欄。ふだんは下の入力欄、詳細画面で材料を足しているときはその欄 */
   var wordTarget = null;
+  /* 変換中（下線が付いている間）は、打っている文字が選ばれた状態になり selectionStart がその頭を指すので、終わり（selectionEnd）で見る */
+  function caretOf(el){ return el.selectionEnd == null ? el.value.length : el.selectionEnd; }
+  document.addEventListener("compositionstart", function(e){ e.target._composing = true; }, true);
+  document.addEventListener("compositionend", function(e){ e.target._composing = false; }, true);
   function tailToken(el){
     el = el || input;
-    var before = el.value.slice(0, el.selectionStart == null ? el.value.length : el.selectionStart);
+    var before = el.value.slice(0, caretOf(el));
     var m = before.match(TAIL_RE);
     return m ? { text:m[1], kind:scriptOf(m[1]) } : null;
   }
@@ -2818,7 +2822,9 @@
 
   function applyWord(tok, word, el){
     el = el || input;
-    var pos = el.selectionStart == null ? el.value.length : el.selectionStart;
+    /* 変換中に選んだら、いったん確定させてから置き換える（そのままだと変換中の文字が後から戻ってくる） */
+    if (el._composing){ el.blur(); el._composing = false; }
+    var pos = caretOf(el);
     var before = el.value.slice(0, pos), after = el.value.slice(pos);
     if (before.slice(-tok.text.length) !== tok.text) return;
     var head = before.slice(0, before.length - tok.text.length) + word;
