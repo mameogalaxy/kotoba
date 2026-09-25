@@ -2203,6 +2203,17 @@
       if (singleLine && e.key === "Enter" && !e.isComposing){ e.preventDefault(); el.blur(); }
       if (e.key === "Escape"){ e.stopPropagation(); el.value = current(); autoGrow(el); el.blur(); }
     });
+    /* 直している間も、下の入力欄と同じ予測変換を欄のすぐ下に出す */
+    var wb = null;
+    function words(){
+      if (!wb){ wb = document.createElement("div"); wb.className = "wordbar sheet-words"; wb.setAttribute("aria-label", "入力の候補"); }
+      if (wb.previousSibling !== el && el.parentNode) el.parentNode.insertBefore(wb, el.nextSibling);
+      renderWordsFor(el, wb);
+    }
+    el.addEventListener("input", function(){ words(); scheduleWordJev(el); });
+    el.addEventListener("compositionend", function(){ words(); scheduleWordJev(el); });
+    el.addEventListener("focus", words);
+    el.addEventListener("blur", function(){ setTimeout(function(){ if (wb && document.activeElement !== el){ wb.hidden = true; wb.textContent = ""; } }, 150); });
     el.addEventListener("focus", function(){
       /* キーボードが出きってから、直している行が見える位置まで送る */
       setTimeout(function(){ try { el.scrollIntoView({ block:"nearest", behavior:"smooth" }); } catch(e){} }, 380);
