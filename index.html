@@ -337,6 +337,7 @@
   .sheet-bar .x{background:transparent; border:0; color:var(--muted); font-size:20px; line-height:1; padding:4px 6px}
   .sheet-body{overflow-y:auto}
   .sheet-words{padding:6px 2px 2px}
+  .wordbar.empty{visibility:hidden; min-height:var(--wb-h, 42px)}
   .gsearch{text-decoration:none; display:inline-block}
   .mat.just-added{border-left-color:var(--accent); background:var(--accent-soft); border-radius:0 10px 10px 0; transition:background 1.2s ease}
   .sheet h2{font-family:"Shippori Mincho",serif; font-weight:600; font-size:19px; margin:0 0 10px; line-height:1.55; text-wrap:balance}
@@ -1955,16 +1956,23 @@
       ta.addEventListener("input", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); keepInView(addRow); });
       ta.addEventListener("compositionend", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); });
       ta.addEventListener("click", function(){ renderWordsFor(ta, wb); });
-      ta.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== ta){ wb.hidden = true; wb.textContent = ""; } }, 150); });
+      ta.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== ta){ wb.hidden = true; wb.textContent = ""; flushSheet(); } }, 150); });
       /* キーボードが出て画面が縮んだあと、書いている欄と「足す」ボタンが見える位置まで送る */
-      ta.addEventListener("focus", function(){ keepInView(addRow, 380); keepInView(addRow, 750); });
+      ta.addEventListener("focus", function(){ renderWordsFor(ta, wb); keepInView(addRow, 380); keepInView(addRow, 750); });
       var addRow = document.createElement("div"); addRow.className = "sheet-actions"; addRow.style.marginTop = "8px";
       var addB = document.createElement("button"); addB.type = "button"; addB.className = "ghost"; addB.textContent = "＋ 材料を足す";
+      /* 押してもキーボードを閉じない（閉じて開き直すと画面が上下してチカチカする） */
+      addB.addEventListener("pointerdown", function(e){ if (document.activeElement === ta) e.preventDefault(); });
+      addB.addEventListener("mousedown", function(e){ if (document.activeElement === ta) e.preventDefault(); });
       addB.onclick = function(){
         var v = ta.value.replace(/\s+$/, "").replace(/^\s*\n/, "");
         if (!v.trim()){ ta.focus(); return; }
-        focusAddMat = true; justAddedAt = Date.now();
+        var typing = document.activeElement === ta;
+        justAddedAt = Date.now();
         editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:v, at:justAddedAt }]); });
+        /* その場で1回だけ描き直して、新しい欄にすぐ戻す（押した操作の中で戻すとキーボードが出たまま）。
+           Jev の振り分け直しが終わっても、書いている間はお知らせだけ差し替える */
+        if (openId === n.id && !sheet.hidden){ openSheet(n.id); if (typing){ var nt = $("addMat"); if (nt) nt.focus(); } }
       };
       addRow.appendChild(addB);
       /* Google（AI モード）で調べに行く。Safari で開くので、共有 →「脳みそに送る」でコピーして戻ると貼り付けを出す */
@@ -2101,9 +2109,16 @@
       }
       /* 文中の出典の印を消す：「Instagram · Marc …」「note · GeneLab」のような「サイト · 名前」だけの短い行と、「+2」だけの行、
          その「+2」の前のサイト名だけの行（「note」） */
-      function chipLine(l){ var x = l.trim(); return /^\+\d+$/.test(x) || (x.length <= 45 && /\s[·・]\s/.test(x) && !/[。、！？]/.test(x)); }
+      /* 「note · 名前」「note·みるカス」（· は前後の空白なしもある。和文の「・」は空白ありのときだけ） */
+      function chipLine(l){ var x = l.trim(); return /^\+\d+$/.test(x) || (x.length <= 45 && (/\S\s*·\s*\S/.test(x) || /\s・\s/.test(x)) && !/[。、！？]/.test(x)); }
+      function nonEmpty(arr, i3, d){ for (var q2 = i3 + d; q2 >= 0 && q2 < arr.length; q2 += d) if (arr[q2].trim()) return arr[q2].trim(); return ""; }
+      function shortAscii(x){ return /^[A-Za-z0-9][A-Za-z0-9 .&'’\-]{0,24}$/.test(x); }
       rest = rest.filter(function(l, i2, arr){
         if (chipLine(l)) return false;
+        /* 出典が1件だけの印（「Google Play」「note」）：文のすぐあとに英字の名前だけの行。
+           英字の語を並べた箇条（Python / JavaScript…）は消さないよう、前が長い文で、次も同じような行でないときだけ */
+        var x = l.trim(), pv = nonEmpty(arr, i2, -1), nv = nonEmpty(arr, i2, 1);
+        if (shortAscii(x) && pv.length >= 15 && /[。．.!?！？」）)]$/.test(pv) && !shortAscii(nv)) return false;
         var nx = arr[i2 + 1];
         if (nx !== undefined && /^\s*\+\d+\s*$/.test(nx) && l.trim().length <= 30 && !/[。、]/.test(l)) return false;
         return true;
@@ -2188,7 +2203,7 @@
   }
   function editingInSheet(){
     var a = document.activeElement;
-    return !!(a && sheetBody.contains(a) && (a.classList.contains("title-edit") || a.classList.contains("mat-edit")));
+    return !!(a && sheetBody.contains(a) && (a.classList.contains("title-edit") || a.classList.contains("mat-edit") || a.classList.contains("add-mat")));
   }
   /* 直している最中に画面を作り直すとカーソルが飛ぶので、お知らせだけ差し替えて、描き直しは入力が終わってから */
   function refreshSheet(n){
@@ -2804,9 +2819,12 @@
     wordTarget = { el:el, bar:bar };
     var tok = tailToken(el);
     bar.textContent = "";
-    if (!tok || tok.text.length < 1){ bar.hidden = true; return; }
+    /* 打っている間は候補の段の場所を空けたままにする（出たり消えたりで下のボタンが上下してチカチカしないように） */
+    var reserve = bar.classList.contains("sheet-words") ? document.activeElement === el : (document.activeElement === el && !!el.value.trim());
+    if (!tok || tok.text.length < 1){ bar.hidden = !reserve; bar.classList.add("empty"); return; }
     var list = suggestWords(tok);
-    bar.hidden = !list.length;
+    bar.hidden = !list.length && !reserve;
+    bar.classList.toggle("empty", !list.length);
     list.forEach(function(x){
       var b = document.createElement("button"); b.type = "button";
       b.className = "word" + (x.p ? " jev" : "");
