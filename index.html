@@ -2099,22 +2099,27 @@
         while (k < rest.length && !rest[k].trim()) k++;
         if (k < rest.length && tail.test(rest[k])){ rest = rest.slice(0, c); break; }
       }
-      /* 出典カードのもう一つの形：「note · GeneLab」→ 見出し →「2026/09/19 — 抜き出し…」。
-         日付＋ダッシュで始まる行か、「…」で終わる抜き出しの行があれば、そのかたまりの頭（直前の空行のあと）から下を切る */
-      for (var e2 = 1; e2 < rest.length; e2++){
-        var ln = rest[e2].trim();
-        if (!(/^\d{4}[\/年.]\d{1,2}[\/月.]\d{1,2}日?\s*[—–-]/.test(ln) || (/(…|\.\.\.)$/.test(ln) && ln.length < 120))) continue;
-        var st = e2;
-        while (st > 0 && rest[st - 1].trim() && e2 - st < 3) st--;
-        if (st > 0){ rest = rest.slice(0, st); break; }
-      }
-      /* 文中の出典の印（「note」「+2」のようにサイト名と件数だけの行）を消す */
+      /* 文中の出典の印を消す：「Instagram · Marc …」「note · GeneLab」のような「サイト · 名前」だけの短い行と、「+2」だけの行、
+         その「+2」の前のサイト名だけの行（「note」） */
+      function chipLine(l){ var x = l.trim(); return /^\+\d+$/.test(x) || (x.length <= 45 && /\s[·・]\s/.test(x) && !/[。、！？]/.test(x)); }
       rest = rest.filter(function(l, i2, arr){
-        if (/^\s*\+\d+\s*$/.test(l)) return false;
+        if (chipLine(l)) return false;
         var nx = arr[i2 + 1];
         if (nx !== undefined && /^\s*\+\d+\s*$/.test(nx) && l.trim().length <= 30 && !/[。、]/.test(l)) return false;
         return true;
       });
+      /* 行の終わりにくっついた出典の印（「…からです。 Instagram · Su… +1」）も落とす */
+      rest = rest.map(function(l){ return l.replace(/([。．.!?！？」）)])\s+[^\s。]{1,24}\s[·・]\s[^。]{0,24}?(?:…|\.\.\.)?(?:\s*\+\d+)?\s*$/, "$1"); });
+      /* 答えの下の出典カード：「見出し…」→「2026/09/19 — 抜き出し…」。日付＋ダッシュで始まる行か、
+         サイト名らしい短い行で始まるかたまりの「…」で終わる行があれば、そのかたまりの頭から下を切る */
+      for (var e2 = 1; e2 < rest.length; e2++){
+        var ln = rest[e2].trim(), dated = /^\d{4}[\/年.]\d{1,2}[\/月.]\d{1,2}日?\s*[—–-]/.test(ln);
+        if (!dated && !(/(…|\.\.\.)$/.test(ln) && ln.length < 120)) continue;
+        var st = e2;
+        while (st > 0 && rest[st - 1].trim() && e2 - st < 3) st--;
+        if (!dated && !(e2 > st && rest[st].trim().length <= 30 && !/[。、]/.test(rest[st]))) continue;
+        if (st > 0){ rest = rest.slice(0, st); break; }
+      }
       /* 続けて質問していたら、その質問は「▶ 」で残す */
       lines = rest.map(function(l){ return l.replace(/^\s*あなたの入力\s*[:：]\s*/, "▶ "); });
       if (lines.join("").trim()) return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
