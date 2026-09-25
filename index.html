@@ -226,6 +226,9 @@
   .mm-item.done .mm-t::before{content:"✓ "}
   .mm .mm-meta{flex:none; max-width:none; margin-right:8px; font-size:10.5px; font-weight:500; opacity:.8}
   .mm .mm-t{flex:1}
+  .mm-cat .mm-t{flex:0 1 auto}
+  .mm .mm-meta[hidden], .mm .mm-n[hidden]{display:none}
+  .mm .mm-n{flex:none; margin-left:7px; padding:3px 7px; border-radius:99px; background:rgba(255,255,255,.26); font-size:10.5px; font-weight:700; letter-spacing:0}
   .mm-item.flag .mm-meta{background:var(--c); color:#fff; opacity:1; font-weight:700; font-size:10px; padding:2px 7px; border-radius:99px; margin-right:6px}
   .ctx-btn{cursor:pointer; border-color:var(--accent); color:var(--accent)}
   .ctx-picker{display:flex; flex-wrap:wrap; gap:6px; margin:-8px 0 16px; padding:10px; border:1px dashed var(--line); border-radius:12px}
@@ -1625,6 +1628,16 @@
   /* 枝を使った時刻（入れた・開いた・直した）。マップでは最近使った枝ほど中心の近くに置く */
   var CATUSE_KEY = "nou.catuse.v1", catUse = {};
   try { catUse = JSON.parse(localStorage.getItem(CATUSE_KEY) || "{}") || {}; } catch(e){ catUse = {}; }
+  /* 項目を開いた時刻（直した・入れた時刻は項目の updatedAt / createdAt にある） */
+  var ITEMUSE_KEY = "nou.itemuse.v1", itemUse = {};
+  try { itemUse = JSON.parse(localStorage.getItem(ITEMUSE_KEY) || "{}") || {}; } catch(e){ itemUse = {}; }
+  function useItem(id){
+    if (!id) return;
+    itemUse[id] = Date.now();
+    var ids = Object.keys(itemUse);
+    if (ids.length > 600) ids.sort(function(a, b){ return itemUse[a] - itemUse[b]; }).slice(0, ids.length - 500).forEach(function(k){ delete itemUse[k]; });
+    try { localStorage.setItem(ITEMUSE_KEY, JSON.stringify(itemUse)); } catch(e){}
+  }
   function useCat(name){
     if (!name) return;
     catUse[name] = Date.now();
@@ -1707,7 +1720,7 @@
   /* ============================ 詳細 ============================ */
   function openSheet(id){
     var n = find(id); if (!n) return;
-    if (openId !== id) useCat(n.context);
+    if (openId !== id){ useCat(n.context); useItem(id); }
     /* 同じ項目を描き直すときは、見ていた位置を保つ（材料を足しても一番上へ戻らない）。
        「材料を足す」欄（なければ下のボタン）が画面の同じ高さに来るように戻す */
     var keepY = null;
@@ -4201,6 +4214,7 @@
     function score(n){ return Math.min(100, (n.status === "open" ? baseScore(n) : Math.round(baseScore(n) * 0.55)) + todayBoost(n)); }
     function catOf(n){ return CONTEXTS.indexOf(n.context) >= 0 ? n.context : "その他"; }
     /* 枝を最後に使った時刻。開いた記録と、中の項目を入れた・直した時刻のうち新しいほう */
+    function itemUsed(n){ return Math.max(itemUse[n.id] || 0, n.createdAt || 0, n.updatedAt || 0); }
     function lastUse(name, items){
       return items.reduce(function(t, n){ return Math.max(t, n.createdAt || 0, n.updatedAt || 0); }, catUse[name] || 0);
     }
@@ -4296,7 +4310,8 @@
         var c = catOf(n); (groups[c] = groups[c] || []).push(n);
       });
       var cats = Object.keys(groups).map(function(c){
-        var items = groups[c].slice().sort(function(x,y){ return score(y) - score(x); });
+        /* 枝の中も、最近使った（入れた・直した・開いた）項目ほど枝の札の近くに置く */
+        var items = groups[c].slice().sort(function(x,y){ return itemUsed(y) - itemUsed(x) || score(y) - score(x); });
         return { name:c, items:items, used: lastUse(c, groups[c]), total: items.reduce(function(t,n){ return t + score(n) + 5; }, 0) };
       }).sort(function(x,y){ return (y.used - x.used) || (y.total - x.total); });
       /* 最近使った枝ほど中心の近く（左上→右上→左下→右下の順に、各すみの内側から外へ）。しばらく使っていない枝は外側になる */
@@ -4342,8 +4357,10 @@
           var color = colorOf(c.name);
           var cy = top ? cur - catH : cur;
           var ck = "c:" + c.name;
-          want[ck] = { kind:"cat", x: left ? x0 + colW - catW : x0, y:cy, w:catW, h:catH, c:color,
-                       text: c.name + "  " + c.items.length, cat:c.name, op: focus ? 0.45 : 1 };
+          /* 札の幅は名前と件数が入るぶん（短い名前は今までどおり、長い名前は列の幅まで） */
+          var cw = Math.min(colW - 4, Math.max(catW, Math.round(34 + String(c.name).length * 13.5 + 40)));
+          want[ck] = { kind:"cat", x: left ? x0 + colW - cw : x0, y:cy, w:cw, h:catH, c:color,
+                       text: c.name, count: c.items.length + "件", cat:c.name, op: focus ? 0.45 : 1 };
           links.push({ from: tail || "hub", to:ck, c:color, kind: tail ? "item" : "cat" });
           cur = top ? cy - rowGap : cy + catH + rowGap;
           var prev = ck;
@@ -4414,6 +4431,8 @@
           el = document.createElement("button"); el.type = "button";
           var ms = document.createElement("span"); ms.className = "mm-meta"; el.appendChild(ms);
           var ts2 = document.createElement("span"); ts2.className = "mm-t"; el.appendChild(ts2);
+          /* 枝の件数は名前と離して丸い印にする（「行きたいとこ 2」だと名前の一部に見えるので） */
+          var nb = document.createElement("span"); nb.className = "mm-n"; el.appendChild(nb);
           stage.appendChild(el); els[key] = el;
           if (!quiet){
             /* 新しい項目は中心から芽を出す */
@@ -4428,7 +4447,8 @@
         el.style.setProperty("--c", sp.c);
         el.children[0].textContent = sp.meta || ""; el.children[0].hidden = !sp.meta;
         el.children[1].textContent = sp.text;
-        el.title = (sp.meta ? sp.meta + "  " : "") + sp.text;
+        el.children[2].textContent = sp.count || ""; el.children[2].hidden = !sp.count;
+        el.title = (sp.meta ? sp.meta + "  " : "") + sp.text + (sp.count ? " " + sp.count : "");
         el.setAttribute("aria-label", el.title);
         el.dataset.id = sp.id || ""; el.dataset.cat = sp.cat || "";
         el.style.width = sp.w + "px"; el.style.height = sp.h + "px";
