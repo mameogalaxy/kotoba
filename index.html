@@ -350,16 +350,18 @@
   .tsheet .sheet-inner{border-radius:0 0 18px 18px; max-height:80%; padding-top:env(safe-area-inset-top,0px); padding-bottom:12px; animation:dropIn .26s ease-out}
   @keyframes dropIn{from{transform:translateY(-100%)} to{transform:none}}
   .br-name{background:var(--c); color:#fff; font-weight:700; font-size:14px; padding:6px 14px; border-radius:99px}
-  .br-cards{display:flex; align-items:flex-start; gap:10px; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x mandatory; min-height:0;
+  /* 枝のカードは全部同じ幅・同じ高さにして、1枚ずつ真ん中に止める（中身が長ければカードの中でスクロール） */
+  .br-cards{display:flex; align-items:stretch; gap:12px; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x mandatory; min-height:0;
     -webkit-overflow-scrolling:touch; scrollbar-width:none; overscroll-behavior-x:contain}
   .br-cards::-webkit-scrollbar{display:none}
-  .br-card{flex:0 0 calc(100% - 28px); box-sizing:border-box; scroll-snap-align:start; scroll-snap-stop:always; overflow-y:auto; max-height:60vh;
+  .br-card{flex:0 0 100%; box-sizing:border-box; scroll-snap-align:center; scroll-snap-stop:always; overflow-y:auto; overflow-x:hidden;
+    height:min(58vh, 520px); max-height:none; overflow-wrap:anywhere; word-break:break-word;
     border:1.5px solid var(--c); border-radius:14px; padding:12px 14px; background:var(--bg); margin:0}
   .br-card + .br-card{margin-left:0}
   .br-chips{display:flex; flex-wrap:wrap; gap:6px}
   .br-card h3{font-size:17px; margin:10px 0 2px; line-height:1.4}
   .br-when{font-size:12px; color:var(--muted); margin:0 0 8px}
-  .br-mat{white-space:pre-wrap; word-break:break-word; font-size:14px; color:var(--ink2); border-left:2px solid var(--c); padding-left:10px; margin:8px 0}
+  .br-mat{white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere; font-size:14px; color:var(--ink2); border-left:2px solid var(--c); padding-left:10px; margin:8px 0}
   .br-foot{display:flex; align-items:center; gap:8px; padding-top:10px}
   .br-foot .nav{background:transparent; border:1px solid var(--line); color:var(--ink2); border-radius:99px; width:34px; height:34px; font-size:18px; line-height:1; padding:0}
   .br-foot .nav:disabled{opacity:.3}
@@ -4081,7 +4083,7 @@
     var i = Math.max(0, Math.min(items.length - 1, index || 0));
     requestAnimationFrame(function(){ box.scrollLeft = i * branchStep(); syncBranchPos(); });
   }
-  function branchStep(){ var c = $("brCards").querySelector(".br-card"); return c ? c.offsetWidth + 10 : 1; }
+  function branchStep(){ var c = $("brCards").querySelector(".br-card"); return c ? c.offsetWidth + 12 : 1; }
   function branchIndex(){
     var box = $("brCards"), n = box.querySelectorAll(".br-card").length;
     if (!n) return 0;
