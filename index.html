@@ -2825,6 +2825,8 @@
   function caretOf(el){ return el.selectionEnd == null ? el.value.length : el.selectionEnd; }
   document.addEventListener("compositionstart", function(e){ e.target._composing = true; }, true);
   document.addEventListener("compositionend", function(e){ e.target._composing = false; }, true);
+  /* iPhone では compositionstart が来ないことがあるので、直前の入力が変換中の文字だったかも覚えておく */
+  document.addEventListener("input", function(e){ if (e.target) e.target._lastComp = !!(e.isComposing || e.inputType === "insertCompositionText"); }, true);
   function tailToken(el){
     el = el || input;
     var before = el.value.slice(0, caretOf(el));
@@ -2895,7 +2897,7 @@
       /* ふだんは押しても欄から離れない（キーボードが閉じない）。
          変換中だけは、iPhone が離れるときに変換中の文字を確定させるのに任せ、そのあと置き換えて欄に戻す
          （変換中のまま置き換えると、あとから変換中の文字が上書きしてくる） */
-      function hold(e){ if (el._composing){ el._refocusing = true; setTimeout(function(){ el._refocusing = false; }, 600); } else e.preventDefault(); }
+      function hold(e){ if (el._composing || el._lastComp || tok.kind === "hira"){ el._refocusing = true; setTimeout(function(){ el._refocusing = false; }, 600); } else e.preventDefault(); }
       b.addEventListener("pointerdown", hold);
       b.addEventListener("mousedown", hold);
       b.addEventListener("click", function(){ applyWord(tok, x.word, el); });
@@ -2930,7 +2932,7 @@
       try { el.setSelectionRange(s0 + word.length, s0 + word.length); } catch(e2){}
       el.dispatchEvent(new Event("input"));
     }
-    el._composing = false; el._refocusing = false;
+    el._composing = false; el._lastComp = false; el._refocusing = false;
     if (done && bar0()) renderWordsFor(el, bar0());
     function bar0(){ return wordTarget && wordTarget.el === el ? wordTarget.bar : null; }
     if (tok.kind !== scriptOf(word)){
