@@ -340,7 +340,12 @@
   .sheet-bar .x{background:transparent; border:0; color:var(--muted); font-size:20px; line-height:1; padding:4px 6px}
   .sheet-body{overflow-y:auto}
   .sheet-words{padding:6px 2px 2px}
-  #sheetWords{flex:none; padding:8px 0 2px; margin-top:4px; border-top:1px solid var(--line); background:var(--bg)}
+  /* 詳細画面の候補の段は、画面の下に重ねて出す（場所を取らないので、出たり消えたりしても中身は動かない）。
+     書いている間は下に同じだけ余白を足して、最後の行が段の下に隠れないようにする */
+  #sheet .sheet-inner{position:relative}
+  #sheetWords{position:absolute; left:16px; right:16px; bottom:calc(10px + env(safe-area-inset-bottom,0px)); z-index:2;
+    padding:8px 0 2px; border-top:1px solid var(--line); background:var(--bg)}
+  #sheet .sheet-inner:focus-within .sheet-body{padding-bottom:58px}
   .wordbar.empty{visibility:hidden; height:44px; overflow:hidden}
   .gsearch{text-decoration:none; display:inline-block}
   .mat.just-added{border-left-color:var(--accent); background:var(--accent-soft); border-radius:0 10px 10px 0; transition:background 1.2s ease}
@@ -384,6 +389,7 @@
     border:1px solid var(--line); border-radius:var(--radius); padding:10px 12px; outline:none;
   }
   textarea.box{min-height:70px; resize:vertical}
+  textarea.add-mat{overflow:hidden; resize:none}
   input.box, textarea.box, select.box{font-size:16px}
   textarea.box:focus, input.box:focus{border-color:var(--accent)}
   .sheet-actions{display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap}
@@ -1967,7 +1973,8 @@
       sheetBody.appendChild(ta);
       /* 下の入力欄と同じ予測変換を、この欄のすぐ下に出す */
       var wb = $("sheetWords");
-      ta.addEventListener("input", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); keepInView(addRow); });
+      /* 欄は書いた分だけ伸ばす（欄の中でスクロールすると、欄の上を触っても画面が動かなくなるので） */
+      ta.addEventListener("input", function(){ autoGrow(ta); renderWordsFor(ta, wb); scheduleWordJev(ta); keepInView(addRow); });
       ta.addEventListener("compositionend", function(){ renderWordsFor(ta, wb); scheduleWordJev(ta); });
       ta.addEventListener("click", function(){ renderWordsFor(ta, wb); });
       ta.addEventListener("blur", function(){ setTimeout(function(){ if (document.activeElement !== ta){ hideSheetWords(); flushSheet(); } }, 150); });
@@ -2190,7 +2197,7 @@
   }
   function autoGrow(el){
     var sc = el.closest && el.closest(".sheet-body"), st = sc ? sc.scrollTop : 0;
-    el.style.height = "auto"; el.style.height = el.scrollHeight + "px";
+    el.style.height = "auto"; el.style.height = (el.scrollHeight + el.offsetHeight - el.clientHeight) + "px";
     if (sc && sc.scrollTop !== st) sc.scrollTop = st;
   }
   /* 詳細画面の中で、el の下端が見えるところまでスクロールする（キーボードで狭くなったあと用） */
@@ -2201,7 +2208,9 @@
       while (box && !(box.scrollHeight > box.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
       if (!box) return;
       var r = el.getBoundingClientRect(), b = box.getBoundingClientRect(), pad = 12;
-      if (r.bottom > b.bottom - pad) box.scrollTop += r.bottom - b.bottom + pad;
+      /* 詳細画面で書いている間は、下に重ねた候補の段のぶん上で止める */
+      var sw = $("sheetWords"), low = pad + (sw && box === sheetBody && sheetBody.parentElement.contains(document.activeElement) ? 58 : 0);
+      if (r.bottom > b.bottom - low) box.scrollTop += r.bottom - b.bottom + low;
       else if (r.top < b.top + pad) box.scrollTop -= b.top + pad - r.top;
     }, delay || 0);
   }
@@ -2856,8 +2865,9 @@
     var tok = tailToken(el);
     bar.textContent = "";
     /* 打っている間は候補の段の場所を空けたままにする（出たり消えたりで下のボタンが上下してチカチカしないように） */
-    /* 下の入力欄では空けない（空いたぶんマップが狭くなるので）。詳細画面の段だけ場所を取っておく */
-    var reserve = bar.classList.contains("sheet-words") && document.activeElement === el;
+    /* 候補がないときは段ごと消す。詳細画面の段は画面の下（書いている欄の外）にあるので、出たり消えたりしても欄やボタンは動かない。
+       空けておくと、そこを触っても画面がスクロールしないので空けない */
+    var reserve = false;
     if (!tok || tok.text.length < 1){ bar.hidden = !reserve; bar.classList.add("empty"); return; }
     var list = suggestWords(tok);
     bar.hidden = !list.length && !reserve;
