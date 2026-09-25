@@ -345,7 +345,9 @@
   .block-label{font-size:11px; letter-spacing:.1em; color:var(--muted); margin:20px 0 8px; font-weight:500}
   .mat{border-left:2px solid var(--line); padding:2px 0 2px 12px; margin-bottom:12px; font-size:13.5px; color:var(--ink2);
     white-space:pre-wrap; word-break:break-word}
-  .mat-foot{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:3px}
+  .mat-foot{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:3px; flex-wrap:wrap}
+  .copy.gsearch{color:var(--accent); border-color:var(--accent); text-decoration:none}
+  .mat-btns{display:flex; gap:6px; margin-left:auto; flex-wrap:nowrap}
   .mat-foot time{margin:0}
   .copy{flex:none; background:transparent; border:1px solid var(--line); border-radius:99px; padding:3px 11px;
     font-size:11.5px; color:var(--ink2); white-space:nowrap}
@@ -1876,7 +1878,6 @@
         var t = document.createElement("time"); t.textContent = when(m.at, true) + " · " + ago(m.at); foot.appendChild(t);
         if ((n.materials || []).length > 1){
           var sp = document.createElement("button"); sp.type = "button"; sp.className = "copy"; sp.textContent = "分ける";
-          sp.style.marginLeft = "auto";
           sp.onclick = function(){ splitMaterial(n, m); };
           foot.appendChild(sp);
           var del = document.createElement("button"); del.type = "button"; del.className = "copy"; del.textContent = "消す";
@@ -1887,8 +1888,20 @@
           foot.appendChild(del);
         }
         var cp = copyButton(function(){ return m.text; });
-        if ((n.materials || []).length <= 1) cp.style.marginLeft = "auto";
         foot.appendChild(cp);
+        /* この材料の文字で Google（AI モード）を調べる。パスワードらしいものが入っていたら出さない */
+        var q = String(m.text || "").replace(URL_RE, " ").replace(/\s+/g, " ").trim();
+        if (q && !n.secret && !detectSecret(m.text).hit){
+          var sr = document.createElement("a"); sr.className = "copy gsearch"; sr.textContent = "調べる";
+          sr.href = googleSearchUrl(q);
+          if (!IOS){ sr.target = "_blank"; sr.rel = "noopener noreferrer"; }
+          sr.addEventListener("click", function(){ setPasteFor(n.id); });
+          foot.insertBefore(sr, foot.children[1] || null);
+        }
+        /* ボタンはひとまとめにして、狭いときは日付の下の行へまとめて回す */
+        var btns = document.createElement("span"); btns.className = "mat-btns";
+        while (foot.children[1]) btns.appendChild(foot.children[1]);
+        foot.appendChild(btns);
         d.appendChild(foot);
         sheetBody.appendChild(d);
       });
@@ -2036,6 +2049,16 @@
       return id ? (x.id === id ? x : null) : x;
     } catch(e){ return null; }
   }
+  /* Google の AI モードで q を調べるアドレス（udm=50 が AI モード）。iPhone では Safari で開く */
+  function googleSearchUrl(q){
+    return (IOS ? "x-safari-" : "") + "https://www.google.com/search?udm=50&q=" + encodeURIComponent(String(q).slice(0, 500));
+  }
+  /* 「脳みそに送る」でコピーした文から、要らない行を落とす：アドレスだけの行は消し、1行目の「◯◯ - Google 検索」は「🔍 ◯◯」にする */
+  function cleanPasted(t){
+    var lines = String(t || "").replace(/\r/g, "").split("\n").filter(function(l){ return !/^\s*(https?:\/\/|www\.)\S+\s*$/i.test(l); });
+    if (lines.length) lines[0] = lines[0].replace(/^(.+?)\s*[-–—]\s*Google\s*(検索|Search)\s*$/i, "🔍 $1");
+    return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
   function clearPasteFor(){ try { localStorage.removeItem(PASTE_KEY); } catch(e){} }
   function pasteBar(n){
     var box = document.createElement("div"); box.className = "pastebar";
@@ -2046,7 +2069,7 @@
       var t = "";
       /* iPhone では押したあとに出る「ペースト」を押すと読める（勝手には読めない仕組み） */
       try { t = await navigator.clipboard.readText(); } catch(e){ t = ""; }
-      t = String(t || "").replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim().slice(0, 8000);
+      t = cleanPasted(t).slice(0, 8000);
       if (!t){
         p.textContent = "読み込めませんでした。下の欄を長押しして「ペースト」してから「＋ 材料を足す」を押してください。";
         var el = $("addMat"); if (el) el.focus();
