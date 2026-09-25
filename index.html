@@ -99,6 +99,9 @@
     font-size:15px; line-height:1.3; color:var(--ink); white-space:nowrap}
   .word:hover{background:var(--surface2)}
   .word.jev{border-color:var(--accent)}
+  /* 変換中は押せない（薄く・点線）。確定すると色が付いて押せる */
+  .word.wait{opacity:.38; border-style:dashed; pointer-events:auto}
+  .wordbar:not(.waiting) .word{border-color:color-mix(in srgb, var(--accent) 55%, var(--line)); transition:opacity .15s, border-color .15s}
   .word small{margin-left:5px; font-size:10px; color:var(--muted); font-variant-numeric:tabular-nums}
   .composer{display:flex; align-items:flex-end; gap:6px; background:var(--surface);
     border:1px solid var(--line); border-radius:24px; padding:5px 5px 5px 6px}
@@ -253,6 +256,15 @@
   @media (hover:hover){ .title-edit:hover, .mat-edit:hover{background:var(--surface)} }
   .title-edit:focus, .mat-edit:focus{outline:none; background:var(--surface); box-shadow:0 0 0 1.5px var(--accent)}
   .title-row{display:flex; align-items:flex-start; gap:10px}
+  /* 打った言葉のマーカー（カテゴリーの色をうすく。文字は上の欄のものがそのまま見える） */
+  .hlwrap{position:relative}
+  .title-row > .hlwrap{flex:1; min-width:0}
+  .hlwrap > textarea{position:relative; z-index:1}
+  .hlwrap > textarea:not(:focus){background:transparent}
+  .hlback{position:absolute; pointer-events:none; box-sizing:border-box; padding:3px 6px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; color:transparent; overflow:hidden}
+  .hlback.t{font-family:"Shippori Mincho",serif; font-weight:600; font-size:19px; line-height:1.55}
+  .hlback.m{font:inherit; font-size:16px; line-height:1.6}
+  .hlback mark{color:transparent; background:color-mix(in srgb, var(--hl, #f6da6c) 34%, transparent); border-radius:3px}
   .title-row h2{flex:1; min-width:0}
   .title-row .copy{margin-top:4px}
   .edit-box{display:flex; flex-direction:column; gap:8px; margin-bottom:12px}
@@ -1738,7 +1750,7 @@
   /* ============================ 詳細 ============================ */
   function openSheet(id){
     var n = find(id); if (!n) return;
-    if (openId !== id){ useCat(n.context); useItem(id); }
+    if (openId !== id){ useCat(n.context); useItem(id); hlTerms = termsOf(input.value); }
     /* 同じ項目を描き直すときは、見ていた位置を保つ（材料を足しても一番上へ戻らない）。
        「材料を足す」欄（なければ下のボタン）が画面の同じ高さに来るように戻す */
     var keepY = null;
@@ -2025,6 +2037,9 @@
       act.appendChild(done); act.appendChild(hideButton(n)); addDelete(act, n); sheetBody.appendChild(act);
     }
     sheet.hidden = false;
+    /* 入力欄に打った言葉に、カテゴリーの色のうすいマーカーを引く */
+    sheetBody.style.setProperty("--hl", Mind.color(ctxName(n.context)));
+    if (hlTerms.length) Array.prototype.forEach.call(sheetBody.querySelectorAll("textarea.title-edit, textarea.mat-edit"), addMarks);
     if (keepY !== null){
       /* 材料の欄は描いた直後はまだ1行ぶんなので、先に中身の高さまで伸ばしてから位置を合わせる */
       Array.prototype.forEach.call(sheetBody.querySelectorAll("textarea.mat-edit, textarea.title-edit"), autoGrow);
@@ -2204,6 +2219,45 @@
       var b = sheetBody.getBoundingClientRect(), r = m.getBoundingClientRect();
       sheetBody.scrollTo({ top: Math.max(0, sheetBody.scrollTop + r.top - b.top - 12), behavior:"smooth" });
     }, 450);
+  }
+  /* 入力欄に打った言葉（開いたときのもの）。見出しと材料の中のその言葉にマーカーを引く */
+  var hlTerms = [];
+  function termsOf(q){
+    q = String(q || "").trim(); if (!q) return [];
+    var out = {};
+    q.split(/[\s　、。,.!！?？・「」『』（）()【】:：\/]+/).forEach(function(w){
+      if (!w || (w.length < 2 && !/[一-龥々A-Za-z0-9]/.test(w))) return;
+      out[w] = 1;
+      if (/^[ぁ-ゖー]+$/.test(w)) out[toKata(w)] = 1;   /* くろー → クロー */
+    });
+    return Object.keys(out).sort(function(a, b){ return b.length - a.length; }).slice(0, 12);
+  }
+  function hlRegex(){
+    if (!hlTerms.length) return null;
+    return new RegExp("(" + hlTerms.map(function(w){ return w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|") + ")", "gi");
+  }
+  /* 文字欄の後ろに同じ文字を透明で並べ、言葉の部分だけ色を付けて、マーカーを引いたように見せる */
+  function addMarks(ta){
+    var re = hlRegex(); if (!re || !ta.parentNode) return;
+    var wrap = document.createElement("div"); wrap.className = "hlwrap";
+    ta.parentNode.insertBefore(wrap, ta); wrap.appendChild(ta);
+    var back = document.createElement("div"); back.className = "hlback " + (ta.classList.contains("title-edit") ? "t" : "m"); back.setAttribute("aria-hidden", "true");
+    wrap.insertBefore(back, ta);
+    function paint(){
+      back.textContent = "";
+      var t = ta.value, last = 0, m; re.lastIndex = 0;
+      while ((m = re.exec(t))){
+        if (!m[0]) { re.lastIndex++; continue; }
+        back.appendChild(document.createTextNode(t.slice(last, m.index)));
+        var mk = document.createElement("mark"); mk.textContent = m[0]; back.appendChild(mk);
+        last = m.index + m[0].length;
+      }
+      back.appendChild(document.createTextNode(t.slice(last) + "\n"));
+      back.style.left = ta.offsetLeft + "px"; back.style.top = ta.offsetTop + "px";
+      back.style.width = ta.offsetWidth + "px"; back.style.height = ta.offsetHeight + "px";
+    }
+    requestAnimationFrame(function(){ requestAnimationFrame(paint); });
+    ta.addEventListener("input", function(){ requestAnimationFrame(paint); });
   }
   function autoGrow(el){
     var sc = el.closest && el.closest(".sheet-body"), st = sc ? sc.scrollTop : 0;
@@ -2824,7 +2878,7 @@
   /* 変換中（下線が付いている間）は、打っている文字が選ばれた状態になり selectionStart がその頭を指すので、終わり（selectionEnd）で見る */
   function caretOf(el){ return el.selectionEnd == null ? el.value.length : el.selectionEnd; }
   document.addEventListener("compositionstart", function(e){ e.target._composing = true; }, true);
-  document.addEventListener("compositionend", function(e){ e.target._composing = false; }, true);
+  document.addEventListener("compositionend", function(e){ e.target._composing = false; e.target._lastComp = false; }, true);
   /* iPhone では compositionstart が来ないことがあるので、直前の入力が変換中の文字だったかも覚えておく */
   document.addEventListener("input", function(e){ if (e.target) e.target._lastComp = !!(e.isComposing || e.inputType === "insertCompositionText"); }, true);
   function tailToken(el){
@@ -2885,8 +2939,9 @@
        空けておくと、そこを触っても画面がスクロールしないので空けない */
     var reserve = false;
     if (!tok || tok.text.length < 1){ bar.hidden = !reserve; bar.classList.add("empty"); return; }
-    var list = suggestWords(tok);
+    var list = suggestWords(tok), waiting = !!(el._composing || el._lastComp);
     bar.hidden = !list.length && !reserve;
+    bar.classList.toggle("waiting", waiting);
     bar.classList.toggle("empty", !list.length);
     list.forEach(function(x){
       var b = document.createElement("button"); b.type = "button";
@@ -2897,25 +2952,12 @@
       /* ふだんは押しても欄から離れない（キーボードが閉じない）。
          変換中だけは、iPhone が離れるときに変換中の文字を確定させるのに任せ、そのあと置き換えて欄に戻す
          （変換中のまま置き換えると、あとから変換中の文字が上書きしてくる） */
-      /* ふだんは押しても欄から離れない（キーボードが閉じない）。
-         変換中（ひらがなの打ちかけなど）は、指が触れた瞬間に欄から離れて iPhone に変換を確定させ、
-         指を離したときに置き換えて欄に戻す（同じ瞬間に離れて戻ると、iPhone は確定せず後から書き戻してくる） */
-      var composingNow = function(){ return el._composing || el._lastComp || tok.kind === "hira"; }, byTouch = 0;
-      var t0 = null;
-      b.addEventListener("touchstart", function(e){
-        t0 = { x:e.touches[0].clientX, y:e.touches[0].clientY, moved:false };
-        if (composingNow() && document.activeElement === el){ el._refocusing = true; el.blur(); }
-      }, { passive:true });
-      b.addEventListener("touchmove", function(e){ if (t0 && Math.abs(e.touches[0].clientX - t0.x) + Math.abs(e.touches[0].clientY - t0.y) > 10) t0.moved = true; }, { passive:true });
-      b.addEventListener("touchend", function(e){
-        e.preventDefault(); byTouch = Date.now();
-        /* 候補の段を横にずらしただけなら選ばない（離れていたら欄に戻るだけ） */
-        if (t0 && t0.moved){ if (el._refocusing){ el.focus(); el._refocusing = false; } return; }
-        applyWord(tok, x.word, el);
-      });
+      /* 変換中（下線が付いている間）は候補を薄くして押せなくする。確定すると色が戻って押せる。
+         変換中のまま置き換えると、iPhone があとから変換中の文字を書き戻してくるため */
+      if (waiting){ b.classList.add("wait"); b.setAttribute("aria-disabled", "true"); }
       b.addEventListener("pointerdown", function(e){ e.preventDefault(); });
       b.addEventListener("mousedown", function(e){ e.preventDefault(); });
-      b.addEventListener("click", function(){ if (Date.now() - byTouch > 700) applyWord(tok, x.word, el); });
+      b.addEventListener("click", function(){ if (b.classList.contains("wait")) return; applyWord(tok, x.word, el); });
       bar.appendChild(b);
     });
   }
