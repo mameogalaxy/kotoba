@@ -2899,18 +2899,26 @@
 
   function applyWord(tok, word, el){
     el = el || input;
-    /* 変換中に選んだら、いったん確定させてから置き換える（そのままだと変換中の文字が後から戻ってくる） */
-    if (el._composing){
-      /* 離れてすぐ戻るだけなので、「直し終わった」扱い（保存・描き直し・候補を消す）にはしない */
-      el._refocusing = true; el.blur(); el._composing = false;
-      setTimeout(function(){ el._refocusing = false; }, 400);
+    /* 欄から離れずに、打ちかけの言葉だけを選んだ言葉に置き換える。
+       「打ちかけの範囲を選んで、その上に文字を入れる」やり方（キーボードで打ったのと同じ扱い）なら、
+       変換中でも iPhone の変換の状態が崩れず、そのまま改行や続きが打てる */
+    var end = caretOf(el), start = end - tok.text.length;
+    if (start < 0 || el.value.slice(start, end) !== tok.text) return;
+    if (document.activeElement !== el) el.focus();
+    var done = false;
+    try {
+      el.setSelectionRange(start, end);
+      done = document.execCommand("insertText", false, word) && el.value.slice(start, start + word.length) === word;
+    } catch(e){ done = false; }
+    if (!done){
+      /* うまくいかない環境では、今までどおり中身を直接書き換える */
+      var cur = el.value, s0 = cur.slice(start, end) === tok.text ? start : -1;
+      if (s0 < 0) return;
+      el.value = cur.slice(0, s0) + word + cur.slice(end);
+      try { el.setSelectionRange(s0 + word.length, s0 + word.length); } catch(e2){}
+      el.dispatchEvent(new Event("input"));
     }
-    var pos = caretOf(el);
-    var before = el.value.slice(0, pos), after = el.value.slice(pos);
-    if (before.slice(-tok.text.length) !== tok.text) return;
-    var head = before.slice(0, before.length - tok.text.length) + word;
-    el.value = head + after;
-    try { el.setSelectionRange(head.length, head.length); } catch(e){}
+    el._composing = false;
     if (tok.kind !== scriptOf(word)){
       var rh = tok.kind === "latin" ? romaToHira(tok.text) : "";
       var key = rh ? toKata(rh) : toKata(tok.text);
@@ -2918,8 +2926,6 @@
       aliases[key][word] = (aliases[key][word] || 0) + 1;
       saveAliases();
     }
-    el.focus();
-    el.dispatchEvent(new Event("input"));
   }
 
   /* 覚えた組み合わせも音の骨組みも当たらないかなは、Jev に単語帳から選ばせる */
