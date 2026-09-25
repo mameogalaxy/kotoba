@@ -121,6 +121,10 @@
     color:var(--ink); line-height:1.5; min-height:0; max-height:140px; overflow-y:auto; outline:none; padding:7px 4px}
   #input::placeholder{color:var(--muted)}
   .composer .primary{padding:8px 16px; flex:none}
+  /* 入れるボタンは丸い上矢印（Claude のアプリと同じ置き方：右下に 🎤 と ↑） */
+  .composer .send{width:36px; height:36px; padding:0; border-radius:50%; display:flex; align-items:center; justify-content:center; margin-bottom:1px}
+  .composer .send:disabled{opacity:.5}
+  .composer:not(.hastext) .send{opacity:.35}
   .composer .plus{flex:none; width:34px; height:34px; border-radius:50%; border:0; background:var(--surface2); color:var(--ink2);
     font-size:20px; line-height:1; padding:0; margin-bottom:2px}
   .composer .plus[aria-expanded="true"]{background:var(--accent); color:var(--on-accent)}
@@ -137,8 +141,7 @@
   .composer.typing{border-radius:18px}
   .composer.typing .inwrap{flex-basis:100%; order:0}
   .composer.typing > .plus, .composer.typing > .mic, .composer.typing > .clear, .composer.typing > #send{order:1}
-  .composer.typing > .clear{margin-left:auto}
-  .composer.typing > .clear[hidden] + #send{margin-left:auto}
+  .composer.typing > .plus{margin-right:auto}
   .cattag input{flex:1 1 auto; width:8em; min-width:0; border:0; outline:none; background:transparent; color:#fff; font:inherit; font-size:16px; padding:0}
   .cattag input::placeholder{color:rgba(255,255,255,.75)}
   .cattag button{flex:none; border:0; background:rgba(255,255,255,.25); color:#fff; width:22px; height:22px; border-radius:50%; font-size:14px; line-height:1; padding:0; margin-left:4px}
@@ -468,10 +471,10 @@
     <div class="composer">
       <button class="plus" id="plus" type="button" aria-label="追加メニュー" aria-expanded="false">＋</button>
       <span class="cattag" id="catTag" hidden><span id="catName"></span><input id="catNew" type="text" maxlength="12" placeholder="枝の名前" autocomplete="off"><button type="button" id="catX" aria-label="枝の指定をやめる">×</button></span><span class="brk" aria-hidden="true"></span>
-      <button class="mic" id="mic" type="button" hidden aria-pressed="false" aria-label="音声で入力"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
       <div class="inwrap"><div class="mirror" id="inputMirror" aria-hidden="true" hidden></div><textarea id="input" rows="1" placeholder="いま頭にあること" aria-label="放り込む内容"></textarea></div>
       <button class="clear" id="clearInput" type="button" hidden aria-label="入力を全部消す">×</button>
-      <button class="primary" id="send" type="button">入れる</button>
+      <button class="mic" id="mic" type="button" hidden aria-pressed="false" aria-label="音声で入力"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
+      <button class="primary send" id="send" type="button" aria-label="入れる"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5.5 11.5L12 5l6.5 6.5"/></svg></button>
     </div>
   </div>
 </div>
@@ -5114,6 +5117,7 @@
   function syncComposer(){
     var c = input.closest(".composer"); if (!c) return;
     c.classList.toggle("typing", document.activeElement === input || !!input.value);
+    c.classList.toggle("hastext", !!input.value.trim());
   }
   input.addEventListener("focus", syncComposer);
   input.addEventListener("blur", function(){ setTimeout(syncComposer, 120); });
