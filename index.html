@@ -1975,18 +1975,15 @@
       ta.addEventListener("focus", function(){ renderWordsFor(ta, wb); keepInView(addRow, 380); keepInView(addRow, 750); });
       var addRow = document.createElement("div"); addRow.className = "sheet-actions"; addRow.style.marginTop = "8px";
       var addB = document.createElement("button"); addB.type = "button"; addB.className = "ghost"; addB.textContent = "＋ 材料を足す";
-      /* 押してもキーボードを閉じない（閉じて開き直すと画面が上下してチカチカする） */
-      addB.addEventListener("pointerdown", function(e){ if (document.activeElement === ta) e.preventDefault(); });
-      addB.addEventListener("mousedown", function(e){ if (document.activeElement === ta) e.preventDefault(); });
       addB.onclick = function(){
         var v = ta.value.replace(/\s+$/, "").replace(/^\s*\n/, "");
         if (!v.trim()){ ta.focus(); return; }
-        var typing = document.activeElement === ta;
-        justAddedAt = Date.now();
-        editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:v, at:justAddedAt }]); });
-        /* その場で1回だけ描き直して、新しい欄にすぐ戻す（押した操作の中で戻すとキーボードが出たまま）。
-           Jev の振り分け直しが終わっても、書いている間はお知らせだけ差し替える */
-        if (openId === n.id && !sheet.hidden){ openSheet(n.id); if (typing){ var nt = $("addMat"); if (nt) nt.focus(); } }
+        var at = justAddedAt = Date.now();
+        editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:v, at:at }]); });
+        /* 足したら、キーボードを閉じて、入れた材料が見えるところまで送る */
+        if (openId === n.id && !sheet.hidden) openSheet(n.id);
+        if (document.activeElement && sheetBody.contains(document.activeElement)) document.activeElement.blur();
+        scrollToMat(at);
       };
       addRow.appendChild(addB);
       /* Google（AI モード）で調べに行く。Safari で開くので、共有 →「脳みそに送る」でコピーして戻ると貼り付けを出す */
@@ -2169,8 +2166,9 @@
       var t = cleanPasted(raw).slice(0, 20000);
       if (!t){ sheetNote = { id:n.id, text:"コピーされた文字がありません。" }; refreshSheet(n); return; }
       if (!looksLikeGoogle(raw) && !window.confirm("コピーされているのは Google のページではないようです。それでも材料に貼りますか？\n\n" + t.slice(0, 80) + (t.length > 80 ? "…" : ""))) return;
-      clearPasteFor(); justAddedAt = Date.now();
-      editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:t, at:justAddedAt }]); });
+      clearPasteFor(); var at = justAddedAt = Date.now();
+      editNode(n, function(){ n.materials = (n.materials || []).concat([{ text:t, at:at }]); });
+      scrollToMat(at);
     };
     return go;
   }
@@ -2180,6 +2178,15 @@
     var wb = $("sheetWords"); if (!wb) return;
     if (wordTarget && wordTarget.bar === wb && wordTarget.el === document.activeElement && wordTarget.el.isConnected) return;
     wb.hidden = true; wb.textContent = "";
+  }
+  /* 足した材料（at で見分ける）の頭が見えるところまで送る。キーボードが閉じて画面が広がるのを待ってから */
+  function scrollToMat(at){
+    setTimeout(function(){
+      var m = Array.prototype.filter.call(sheetBody.querySelectorAll(".mat"), function(x){ return x._at === at; })[0];
+      if (!m) return;
+      var b = sheetBody.getBoundingClientRect(), r = m.getBoundingClientRect();
+      sheetBody.scrollTo({ top: Math.max(0, sheetBody.scrollTop + r.top - b.top - 12), behavior:"smooth" });
+    }, 450);
   }
   function autoGrow(el){
     var sc = el.closest && el.closest(".sheet-body"), st = sc ? sc.scrollTop : 0;
