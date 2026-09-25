@@ -341,7 +341,7 @@
   .sheet-body{overflow-y:auto}
   .sheet-words{padding:6px 2px 2px}
   #sheetWords{flex:none; padding:8px 0 2px; margin-top:4px; border-top:1px solid var(--line); background:var(--bg)}
-  .wordbar.empty{visibility:hidden; min-height:var(--wb-h, 42px)}
+  .wordbar.empty{visibility:hidden; height:44px; overflow:hidden}
   .gsearch{text-decoration:none; display:inline-block}
   .mat.just-added{border-left-color:var(--accent); background:var(--accent-soft); border-radius:0 10px 10px 0; transition:background 1.2s ease}
   .sheet h2{font-family:"Shippori Mincho",serif; font-weight:600; font-size:19px; margin:0 0 10px; line-height:1.55; text-wrap:balance}
@@ -2849,7 +2849,8 @@
     var tok = tailToken(el);
     bar.textContent = "";
     /* 打っている間は候補の段の場所を空けたままにする（出たり消えたりで下のボタンが上下してチカチカしないように） */
-    var reserve = bar.classList.contains("sheet-words") ? document.activeElement === el : (document.activeElement === el && !!el.value.trim());
+    /* 下の入力欄では空けない（空いたぶんマップが狭くなるので）。詳細画面の段だけ場所を取っておく */
+    var reserve = bar.classList.contains("sheet-words") && document.activeElement === el;
     if (!tok || tok.text.length < 1){ bar.hidden = !reserve; bar.classList.add("empty"); return; }
     var list = suggestWords(tok);
     bar.hidden = !list.length && !reserve;
@@ -5038,10 +5039,13 @@
   /* iOS はキーボードが出ても画面の高さを変えないので、見えている高さに合わせて組み直す */
   (function(){
     var vv = window.visualViewport; if (!vv) return;
-    var lastH = 0, root = document.documentElement;
+    var lastH = 0, root = document.documentElement, baseH = 0;
     function fit(){
       var h = Math.round(vv.height), y = Math.max(0, Math.round(vv.offsetTop));
-      root.classList.toggle("kb", window.innerHeight - vv.height > 120);
+      /* キーボードが出ているか。iOS によっては innerHeight も一緒に縮むので、打っていないときの高さを覚えておいて比べる */
+      var ae = document.activeElement, typing = !!(ae && /^(TEXTAREA|INPUT)$/.test(ae.tagName) && ae.type !== "file");
+      if (!typing || !baseH) baseH = vv.height;
+      root.classList.toggle("kb", window.innerHeight - vv.height > 120 || (typing && baseH - vv.height > 150));
       root.style.setProperty("--app-h", h + "px");
       root.style.setProperty("--app-y", y + "px");
       if (h !== lastH){ lastH = h; if (view === "map") Mind.refresh(); }
@@ -5065,7 +5069,8 @@
         } catch(e){}
       }, 120);
     }
-    document.addEventListener("focusin", function(){ setTimeout(caretFix, 350); });
+    document.addEventListener("focusin", function(){ setTimeout(caretFix, 350); setTimeout(fit, 400); });
+    document.addEventListener("focusout", function(){ setTimeout(fit, 400); });
     document.addEventListener("input", function(){ if (window.scrollX) caretFix(); }, true);
     window.addEventListener("scroll", function(){ if (window.scrollX) caretFix(); });
     vv.addEventListener("resize", fit);
