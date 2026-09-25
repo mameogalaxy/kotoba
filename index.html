@@ -5086,8 +5086,10 @@
       root.style.setProperty("--app-h", h + "px");
       root.style.setProperty("--app-y", y + "px");
       if (h !== lastH){ lastH = h; if (view === "map") Mind.refresh(); }
-      caretFix();
+      /* カーソルの入れ直しは、画面の高さか位置が本当に変わったときだけ（打つたびの細かいスクロールでは触らない） */
+      if (h !== lastFitH || y !== lastFitY){ lastFitH = h; lastFitY = y; caretFix(); }
     }
+    var lastFitH = -1, lastFitY = -1;
     /* iPhone では、キーボードで画面が動いたあとも、カーソルだけ前の位置に描かれてずれることがある。
        動いたら、入力中の欄のカーソル位置を入れ直して描き直させる */
     var caretT = null;
@@ -5099,6 +5101,8 @@
         Array.prototype.forEach.call(document.querySelectorAll(".sheet, .sheet-inner, .sheet-body, #app"), function(x){ if (x.scrollLeft) x.scrollLeft = 0; });
         var el = document.activeElement;
         if (!el || !/^(TEXTAREA|INPUT)$/.test(el.tagName) || el.type === "file") return;
+        /* 変換中（下線が付いている間）にカーソルを入れ直すと、変換が壊れて打てなくなるので触らない */
+        if (el._composing) return;
         try {
           var a = el.selectionStart, b = el.selectionEnd;
           el.style.transform = "translateZ(0)";
