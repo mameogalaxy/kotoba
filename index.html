@@ -2873,6 +2873,8 @@
     renderWordsFor(input, $("wordbar"));
   }
   function renderWordsFor(el, bar){
+    /* 候補を押している途中（変換の確定待ち）は候補を作り直さない。作り直すと押したボタンが消えて選べない */
+    if (el._refocusing) return;
     wordTarget = { el:el, bar:bar };
     var tok = tailToken(el);
     bar.textContent = "";
@@ -2890,8 +2892,12 @@
       b.appendChild(document.createTextNode(x.word));
       if (x.p){ var sm = document.createElement("small"); sm.textContent = Math.round(x.p * 100) + "%"; b.appendChild(sm); }
       /* キーボードを閉じないよう、押した瞬間に入力欄のフォーカスを奪わせない */
-      b.addEventListener("pointerdown", function(e){ e.preventDefault(); });
-      b.addEventListener("mousedown", function(e){ e.preventDefault(); });
+      /* ふだんは押しても欄から離れない（キーボードが閉じない）。
+         変換中だけは、iPhone が離れるときに変換中の文字を確定させるのに任せ、そのあと置き換えて欄に戻す
+         （変換中のまま置き換えると、あとから変換中の文字が上書きしてくる） */
+      function hold(e){ if (el._composing){ el._refocusing = true; setTimeout(function(){ el._refocusing = false; }, 600); } else e.preventDefault(); }
+      b.addEventListener("pointerdown", hold);
+      b.addEventListener("mousedown", hold);
       b.addEventListener("click", function(){ applyWord(tok, x.word, el); });
       bar.appendChild(b);
     });
@@ -2902,9 +2908,15 @@
     /* 欄から離れずに、打ちかけの言葉だけを選んだ言葉に置き換える。
        「打ちかけの範囲を選んで、その上に文字を入れる」やり方（キーボードで打ったのと同じ扱い）なら、
        変換中でも iPhone の変換の状態が崩れず、そのまま改行や続きが打てる */
+    var refocus = document.activeElement !== el;
+    if (refocus) el.focus();
     var end = caretOf(el), start = end - tok.text.length;
-    if (start < 0 || el.value.slice(start, end) !== tok.text) return;
-    if (document.activeElement !== el) el.focus();
+    if (start < 0 || el.value.slice(start, end) !== tok.text){
+      /* 確定のときに位置がずれていたら、カーソルの手前から探し直す */
+      var at = el.value.lastIndexOf(tok.text, end);
+      if (at < 0) return;
+      start = at; end = at + tok.text.length;
+    }
     var done = false;
     try {
       el.setSelectionRange(start, end);
@@ -2918,7 +2930,9 @@
       try { el.setSelectionRange(s0 + word.length, s0 + word.length); } catch(e2){}
       el.dispatchEvent(new Event("input"));
     }
-    el._composing = false;
+    el._composing = false; el._refocusing = false;
+    if (done && bar0()) renderWordsFor(el, bar0());
+    function bar0(){ return wordTarget && wordTarget.el === el ? wordTarget.bar : null; }
     if (tok.kind !== scriptOf(word)){
       var rh = tok.kind === "latin" ? romaToHira(tok.text) : "";
       var key = rh ? toKata(rh) : toKata(tok.text);
