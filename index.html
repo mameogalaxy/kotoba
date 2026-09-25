@@ -133,6 +133,12 @@
   .composer.tagged .cattag{order:-2; max-width:100%; margin:2px 0 4px 4px}
   .composer.tagged .brk{display:block; order:-1; flex-basis:100%; height:0}
   .composer.tagged{border-radius:18px}
+  /* 書いている間は、入力欄を1行まるごと使う（ボタンは下の段へ）。横に20字くらい入る */
+  .composer.typing{border-radius:18px}
+  .composer.typing .inwrap{flex-basis:100%; order:0}
+  .composer.typing > .plus, .composer.typing > .mic, .composer.typing > .clear, .composer.typing > #send{order:1}
+  .composer.typing > .clear{margin-left:auto}
+  .composer.typing > .clear[hidden] + #send{margin-left:auto}
   .cattag input{flex:1 1 auto; width:8em; min-width:0; border:0; outline:none; background:transparent; color:#fff; font:inherit; font-size:16px; padding:0}
   .cattag input::placeholder{color:rgba(255,255,255,.75)}
   .cattag button{flex:none; border:0; background:rgba(255,255,255,.25); color:#fff; width:22px; height:22px; border-radius:50%; font-size:14px; line-height:1; padding:0; margin-left:4px}
@@ -2687,6 +2693,7 @@
   }
   function clearFusen(){
     input.style.height = "";
+    if (typeof syncComposer === "function") setTimeout(syncComposer, 0);
     if ($("inputMirror")) setTimeout(renderMirror, 0);
     if ($("wordbar")){ $("wordbar").hidden = true; $("wordbar").textContent = ""; }
     if ($("clearInput")) $("clearInput").hidden = !input.value;
@@ -3527,11 +3534,19 @@
     var p = document.createElement("span"); p.className = "pulse"; statusEl.appendChild(p);
     statusEl.appendChild(document.createTextNode(msg));
   }
+  /* 2行以上で書いたら、1行目を見出し、2行目からを材料1にする（1行目が長い・アドレスだけのときは今までどおり全体を材料に） */
+  function headAndBody(text){
+    text = String(text || "").trim();
+    var lines = text.split("\n"), first = lines[0].trim(), rest = lines.slice(1).join("\n").trim();
+    if (lines.length < 2 || !first || !rest || first.length > 40 || /^(https?:\/\/|www\.)\S+$/i.test(first))
+      return { title: titleOf(text), body: text };
+    return { title: bracketTitle(text) || titleOf(first), body: rest };
+  }
   function rawNode(text){
-    var t = Date.now();
-    var n = { id:newId(), title:titleOf(text),
+    var t = Date.now(), hb = headAndBody(text);
+    var n = { id:newId(), title:hb.title,
       kind:"事実メモ", context:"その他", status:"note", importance:3, freshness:"数週間もつ",
-      createdAt:t, updatedAt:t, materials:[{text:text, at:t}], conclusion:"", conclusionAt:0 };
+      createdAt:t, updatedAt:t, materials:[{text:hb.body, at:t}], conclusion:"", conclusionAt:0 };
     fixKind(n); return n;
   }
 
@@ -3638,16 +3653,17 @@
       noteLanded(target, "「" + target.title + "」（" + ctxName(target.context) + "）の材料にしました。" + pct("未解決の材料", r.isMaterial));
       Mind.flash(target.id, "ここに入りました");
     } else {
-      var isQ = r.unresolved !== null && r.unresolved >= 0.5;
+      var isQ = r.unresolved !== null && r.unresolved >= 0.5, hb = headAndBody(text);
       var n = {
         id:newId(),
-        title: titleOf(text),
+        title: hb.title,
         kind: r.kind, context: r.context,
         status: isQ ? "open" : "note",
         importance: r.importance, freshness: r.freshness,
         createdAt:t, updatedAt:t,
-        materials:[{ text:text, at:t }], conclusion:"", conclusionAt:0
+        materials:[{ text:hb.body, at:t }], conclusion:"", conclusionAt:0
       };
+      if (hb.body !== text) n.titleCustom = true;
       if (r.repeat) n.repeat = r.repeat;
       fixKind(n);
       saveNew(n, function(t, how){
@@ -5094,6 +5110,14 @@
     vv.addEventListener("scroll", fit);
     fit();
   })();
+  /* 書いている間（入力欄を触っている・文字がある）は、入力欄を横いっぱいにする */
+  function syncComposer(){
+    var c = input.closest(".composer"); if (!c) return;
+    c.classList.toggle("typing", document.activeElement === input || !!input.value);
+  }
+  input.addEventListener("focus", syncComposer);
+  input.addEventListener("blur", function(){ setTimeout(syncComposer, 120); });
+  input.addEventListener("input", syncComposer);
   input.addEventListener("input", function(e){
     /* 自分で打ち始めたら、音声のあとの改行ボタンは消す */
     if (e.isTrusted && statusEl.querySelector(".vbtn")) statusEl.hidden = true;
