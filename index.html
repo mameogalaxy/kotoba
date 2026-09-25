@@ -2088,6 +2088,17 @@
       var end = -1;
       for (var j = 0; j < rest.length; j++){ if (AI_STOP.test(rest[j])){ end = j; break; } }
       if (end >= 0) rest = rest.slice(0, end);
+      /* 答えの下の出典カード（「NAVITIME」→「◯◯ - NAVITIME」→ 抜き出し文）から下は要らない。
+         サイト名だけの短い行のすぐあとに、そのサイト名を含む見出しが来たらカードの始まりとみなす */
+      for (var c = 1; c < rest.length; c++){
+        var site = rest[c].trim();
+        if (!site || site.length > 30 || /[。、？！?!：:「」【】]/.test(site) || /^[・●■◆\-*＊\d０-９]/.test(site)) continue;
+        /* 見出しは「◯◯ - NAVITIME」のように、最後がそのサイト名 */
+        var tail = new RegExp("[-–—|｜]\\s*" + site.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$");
+        var k = c + 1;
+        while (k < rest.length && !rest[k].trim()) k++;
+        if (k < rest.length && tail.test(rest[k])){ rest = rest.slice(0, c); break; }
+      }
       /* 続けて質問していたら、その質問は「▶ 」で残す */
       lines = rest.map(function(l){ return l.replace(/^\s*あなたの入力\s*[:：]\s*/, "▶ "); });
       if (lines.join("").trim()) return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
