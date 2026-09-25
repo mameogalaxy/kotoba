@@ -2897,11 +2897,25 @@
       /* ふだんは押しても欄から離れない（キーボードが閉じない）。
          変換中だけは、iPhone が離れるときに変換中の文字を確定させるのに任せ、そのあと置き換えて欄に戻す
          （変換中のまま置き換えると、あとから変換中の文字が上書きしてくる） */
-      /* 押しても欄から離れない（キーボードが閉じない）。変換中の確定は applyWord の中で行う */
-      function hold(e){ e.preventDefault(); }
-      b.addEventListener("pointerdown", hold);
-      b.addEventListener("mousedown", hold);
-      b.addEventListener("click", function(){ applyWord(tok, x.word, el); });
+      /* ふだんは押しても欄から離れない（キーボードが閉じない）。
+         変換中（ひらがなの打ちかけなど）は、指が触れた瞬間に欄から離れて iPhone に変換を確定させ、
+         指を離したときに置き換えて欄に戻す（同じ瞬間に離れて戻ると、iPhone は確定せず後から書き戻してくる） */
+      var composingNow = function(){ return el._composing || el._lastComp || tok.kind === "hira"; }, byTouch = 0;
+      var t0 = null;
+      b.addEventListener("touchstart", function(e){
+        t0 = { x:e.touches[0].clientX, y:e.touches[0].clientY, moved:false };
+        if (composingNow() && document.activeElement === el){ el._refocusing = true; el.blur(); }
+      }, { passive:true });
+      b.addEventListener("touchmove", function(e){ if (t0 && Math.abs(e.touches[0].clientX - t0.x) + Math.abs(e.touches[0].clientY - t0.y) > 10) t0.moved = true; }, { passive:true });
+      b.addEventListener("touchend", function(e){
+        e.preventDefault(); byTouch = Date.now();
+        /* 候補の段を横にずらしただけなら選ばない（離れていたら欄に戻るだけ） */
+        if (t0 && t0.moved){ if (el._refocusing){ el.focus(); el._refocusing = false; } return; }
+        applyWord(tok, x.word, el);
+      });
+      b.addEventListener("pointerdown", function(e){ e.preventDefault(); });
+      b.addEventListener("mousedown", function(e){ e.preventDefault(); });
+      b.addEventListener("click", function(){ if (Date.now() - byTouch > 700) applyWord(tok, x.word, el); });
       bar.appendChild(b);
     });
   }
@@ -2913,11 +2927,7 @@
        変換中でも iPhone の変換の状態が崩れず、そのまま改行や続きが打てる */
     /* 変換中（ひらがなの打ちかけ・直前の入力が変換中）なら、いったん離れてすぐ戻って変換を確定させる。
        iPhone では候補のボタンを押しても欄から離れないので、こちらで離さないと下線の付いた変換中のまま残る */
-    if (el._composing || el._lastComp || tok.kind === "hira"){
-      el._refocusing = true;
-      el.blur(); el.focus();
-      setTimeout(function(){ el._refocusing = false; }, 400);
-    } else if (document.activeElement !== el) el.focus();
+    if (document.activeElement !== el) el.focus();
     var end = caretOf(el), start = end - tok.text.length;
     if (start < 0 || el.value.slice(start, end) !== tok.text){
       /* 確定のときに位置がずれていたら、カーソルの手前から探し直す */
