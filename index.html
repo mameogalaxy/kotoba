@@ -2897,7 +2897,8 @@
       /* ふだんは押しても欄から離れない（キーボードが閉じない）。
          変換中だけは、iPhone が離れるときに変換中の文字を確定させるのに任せ、そのあと置き換えて欄に戻す
          （変換中のまま置き換えると、あとから変換中の文字が上書きしてくる） */
-      function hold(e){ if (el._composing || el._lastComp || tok.kind === "hira"){ el._refocusing = true; setTimeout(function(){ el._refocusing = false; }, 600); } else e.preventDefault(); }
+      /* 押しても欄から離れない（キーボードが閉じない）。変換中の確定は applyWord の中で行う */
+      function hold(e){ e.preventDefault(); }
       b.addEventListener("pointerdown", hold);
       b.addEventListener("mousedown", hold);
       b.addEventListener("click", function(){ applyWord(tok, x.word, el); });
@@ -2910,8 +2911,13 @@
     /* 欄から離れずに、打ちかけの言葉だけを選んだ言葉に置き換える。
        「打ちかけの範囲を選んで、その上に文字を入れる」やり方（キーボードで打ったのと同じ扱い）なら、
        変換中でも iPhone の変換の状態が崩れず、そのまま改行や続きが打てる */
-    var refocus = document.activeElement !== el;
-    if (refocus) el.focus();
+    /* 変換中（ひらがなの打ちかけ・直前の入力が変換中）なら、いったん離れてすぐ戻って変換を確定させる。
+       iPhone では候補のボタンを押しても欄から離れないので、こちらで離さないと下線の付いた変換中のまま残る */
+    if (el._composing || el._lastComp || tok.kind === "hira"){
+      el._refocusing = true;
+      el.blur(); el.focus();
+      setTimeout(function(){ el._refocusing = false; }, 400);
+    } else if (document.activeElement !== el) el.focus();
     var end = caretOf(el), start = end - tok.text.length;
     if (start < 0 || el.value.slice(start, end) !== tok.text){
       /* 確定のときに位置がずれていたら、カーソルの手前から探し直す */
