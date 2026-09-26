@@ -256,6 +256,7 @@
   @media (hover:hover){ .title-edit:hover, .mat-edit:hover{background:var(--surface)} }
   .title-edit:focus, .mat-edit:focus{outline:none; background:var(--surface); box-shadow:0 0 0 1.5px var(--accent)}
   .title-row{display:flex; align-items:flex-start; gap:10px}
+  .tag-pick{display:flex; flex-wrap:wrap; gap:6px; margin:-4px 0 12px; padding:8px; border:1px dashed var(--line); border-radius:12px}
   /* 真ん中の「タップで戻る」の合図：出たときに1回だけ、ふちがやわらかく光って少しふくらむ */
   .hub.nudge .scallop{animation:hubNudge 2.4s ease-in-out 1; transform-origin:50% 50%}
   .hub.nudge .hub-sub{animation:hubNudgeText 2.4s ease-in-out 1}
@@ -1138,6 +1139,8 @@
      基準は、その項目を書いた日 */
   function startOfDay(ts){ var d = new Date(ts); d.setHours(0,0,0,0); return d.getTime(); }
   function dueOf(n){
+    /* 「これは期日じゃない」と外した項目は、日付を読まない */
+    if (n.noDue) return null;
     var key = (n.updatedAt || 0) + "|" + dayKey();
     if (n._dueKey !== key){ n._due = computeDue(n); n._dueKey = key; }
     return n._due;
@@ -1437,6 +1440,7 @@
   /* これから先の日付・曜日・時刻・繰り返しが書いてあれば予定。書いた日より前の日付だけなら予定ではない */
   function looksScheduled(n){
     if (repeatOf(n)) return true;
+    if (n.noDue) return false;
     var du = computeDue(n);
     if (du && du.at >= startOfDay(n.createdAt || n.updatedAt || Date.now())) return true;
     if (isReference(n)) return false;   /* 時刻表の時刻だけでは予定にしない */
@@ -1445,7 +1449,7 @@
   /* Jev が「事実メモ」と言っても、予定の形ならコードで「予定」にする */
   function fixKind(n){
     if ((n.kind === "事実メモ" || !n.kind) && looksScheduled(n)) n.kind = "予定";
-    else if (n.kind === "予定" && (isReference(n) || n.noRepeat) && !looksScheduled(n)) n.kind = "事実メモ";
+    else if (n.kind === "予定" && (isReference(n) || n.noRepeat || n.noDue) && !looksScheduled(n)) n.kind = "事実メモ";
   }
 
   /* 「予定」「今週の予定」「明日の予定」と打ったら、これからの予定を近い順に出す */
@@ -1483,10 +1487,14 @@
   /* Jev の判定（今日に関係するか・忘れると困るか）と、書いてある期日を合わせる */
   function todayInfo(n){
     if (n.status === "done") return null;
-    var j = todayOf(n), rp = repeatOf(n), due = rp ? null : dueOf(n);
-    if (!j && !due && !rp) return null;
+    var j = todayOf(n), rp = repeatOf(n), due = rp ? null : dueOf(n), mineToday = n.today === dayKey();
+    if (!j && !due && !rp && !n.remember && !mineToday) return null;
     var t = j ? j.t : 0, r = j ? j.r : 0, tag = "", near = 0;
     if (n.notToday || (!due && !rp && isReference(n))) t = Math.min(t, 0.1);
+    /* 自分で付けた・外したタグは、Jev の判定より優先する */
+    if (n.remember) r = Math.max(r, 0.9);
+    if (n.noRemember) r = Math.min(r, 0.3);
+    if (mineToday) t = Math.max(t, 0.95);
     /* 繰り返しの予定は、書いてある曜日・日付で決める（Jev が今日と言っても、その日でなければ今日にしない） */
     if (rp){
       var nx = rp.next, tm = rp.time ? " " + rp.time : "";
@@ -1619,7 +1627,7 @@
       if (i.rep && i.tag) label = i.tag + " · " + i.rep.label.replace(/ \d{1,2}:\d{2}$/, "");
       else if (i.t >= 0.6) label = "今日" + (i.due && i.due.days === 0 && i.due.label ? " · " + i.due.label : "");
       else if (i.tag && i.tag !== "忘れずに") label = i.tag + (i.due && i.due.label ? " · " + i.due.label : i.r >= 0.5 ? " · 忘れずに" : "");
-      else label = "忘れずに " + Math.round(i.r * 100) + "%";
+      else label = x.n.remember ? "忘れずに" : "忘れずに " + Math.round(i.r * 100) + "%";
       return { n:x.n, why:"", ts:0, tag:label };
     }) } : null;
     if (!todayDismissed && !input.value.trim() && !recallState) renderFusen();
@@ -1865,18 +1873,42 @@
       } });
     if (ti && !ti.rep){
       if (ti.due){
-        extra.push("期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
+        extra.push({ text: "期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
           + (ti.due.days === 0 ? " · 今日" : ti.due.days < 0 ? " · 過ぎた" : " · " + (ti.due.days === 1 ? "明日" : "あと" + ti.due.days + "日"))
-          + (ti.due.label ? " · " + ti.due.label : ""));
+          + (ti.due.label ? " · " + ti.due.label : "") + " ✕", label: "期日を外す", act: function(){
+            if (!window.confirm("この項目の日付は期日ではない、として外しますか？（あとで「＋ タグ」から戻せます）")) return;
+            n.noDue = true; fixKind(n); put(n); pinToday();
+            sheetNote = { id:n.id, text:"期日を外しました。日付があっても期日としては読みません。" }; openSheet(n.id);
+          } });
         if (ti.due.rest && ti.due.rest.length)
           extra.push("ほか " + ti.due.rest.slice(0, 4).map(function(x){ var d = new Date(x.at); return (d.getMonth() + 1) + "/" + d.getDate() + (x.label ? " " + x.label : ""); }).join("・") + (ti.due.rest.length > 4 ? " …" : ""));
       }
       /* 確率・重要度・鮮度は Jev と並び順の中で使うだけで、画面には出さない */
       if (ti.t >= 0.6 && !ti.due) extra.push({ text:"今日 ✕", act: function(){
-        n.notToday = true; put(n); pinToday();
+        n.notToday = true; if (n.today === dayKey()) delete n.today; put(n); pinToday();
         sheetNote = { id:n.id, text:"今日のことから外しました。日付を書き足せば、その日にまた出ます。" }; openSheet(n.id);
       } });
+      if (ti.r >= 0.75) extra.push({ text:"忘れずに ✕", label:"忘れずにを外す", act: function(){
+        n.noRemember = true; delete n.remember; put(n); pinToday();
+        sheetNote = { id:n.id, text:"「忘れずに」を外しました。" }; openSheet(n.id);
+      } });
     }
+    /* 自分でタグを付ける（外したものを戻す） */
+    var addable = [];
+    if (!(ti && ti.r >= 0.75)) addable.push({ t:"忘れずに", go:function(){ n.remember = true; delete n.noRemember; } });
+    if (!(ti && ti.t >= 0.6)) addable.push({ t:"今日", go:function(){ n.today = dayKey(); delete n.notToday; } });
+    if (n.noDue) addable.push({ t:"日付を期日として読む", go:function(){ delete n.noDue; } });
+    if (addable.length && n.status !== "done") extra.push({ text:"＋ タグ", label:"タグを付ける", act: function(){
+      var box = sheetBody.querySelector(".tag-pick");
+      if (box){ box.remove(); return; }
+      box = document.createElement("div"); box.className = "tag-pick";
+      addable.forEach(function(a){
+        var b = document.createElement("button"); b.type = "button"; b.className = "chip chip-x"; b.textContent = a.t;
+        b.onclick = function(){ a.go(); put(n); pinToday(); sheetNote = { id:n.id, text:"「" + a.t + "」にしました。" }; openSheet(n.id); };
+        box.appendChild(b);
+      });
+      kv.parentNode.insertBefore(box, kv.nextSibling);
+    } });
     extra.concat([n.kind]).forEach(function(t){
       if (!t) return;
       if (typeof t === "object"){
@@ -3904,6 +3936,10 @@
       repeat: validRepeat(x.repeat) || undefined,
       doneOn: typeof x.doneOn === "string" ? x.doneOn.slice(0, 12) : undefined,
       notToday: x.notToday ? true : undefined,
+      noDue: x.noDue ? true : undefined,
+      remember: x.remember ? true : undefined,
+      noRemember: x.noRemember ? true : undefined,
+      today: typeof x.today === "string" ? x.today.slice(0, 12) : undefined,
       ctxLocked: x.ctxLocked ? true : undefined,
       titleCustom: x.titleCustom ? true : undefined,
       noRepeat: x.noRepeat ? true : undefined,
