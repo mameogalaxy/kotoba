@@ -119,6 +119,7 @@
     border-radius:99px; padding:4px 11px; font:inherit; font-size:12.5px; font-weight:700}
   .status .vbtn{margin:4px 6px 0 0; border:1px solid var(--line); background:var(--bg); color:var(--ink2); border-radius:99px; padding:5px 12px; font:inherit; font-size:12.5px; text-decoration:none}
   .splithint{margin:0 0 6px 6px; font-size:12px; font-weight:700; color:var(--accent)}
+  .split-toggle{margin-left:6px; border:1px solid var(--accent); background:transparent; color:var(--accent); border-radius:99px; padding:3px 10px; font:inherit; font-size:12px; font-weight:700}
   #input{position:relative; z-index:1;}
   #input{flex:1; min-width:0; border:0; background:transparent; resize:none; font:inherit; font-size:16px;
     color:var(--ink); line-height:1.5; min-height:0; max-height:140px; overflow-y:auto; outline:none; padding:7px 4px}
@@ -3706,14 +3707,15 @@
 
     /* パスワードなどがコードで見つかったら、Jev には送らずにその場で隠す。
        いくつかまとめて貼られていたら、1つずつ別の項目にする */
+    var whole = keepWhole; keepWhole = false;
     if (!openly && detectSecret(text).hit){
-      var parts = splitEntries(text);
+      var parts = whole ? [text] : splitEntries(text);
       if (parts.length > 1){ await captureMany(parts, text, ctx); return; }
       await captureSecret(text, null, false, ctx); return;
     }
 
     /* 空行があれば、見えている線の通りに1つずつ入れる */
-    var blocks0 = splitBlocks(text);
+    var blocks0 = whole ? [text] : splitBlocks(text);
     if (blocks0.length > 1){ await captureMany(blocks0, text, ctx); return; }
 
     if (!getCfg().key){
@@ -3738,7 +3740,7 @@
     else if (predCtx && predCtx.jev && predCtx.text === text && CONTEXTS.indexOf(predCtx.name) >= 0) r.context = predCtx.name;
 
     /* 空行で区切って別々のことを書いていたら、分けて入れ直す */
-    var blocks = splitBlocks(text);
+    var blocks = whole ? [text] : splitBlocks(text);
     if (blocks.length > 1 && r.separate !== null && r.separate >= 0.6){ await captureMany(blocks, text, ctx); return; }
     if (!openly && r.secret !== null && r.secret >= 0.7){ await captureSecret(text, r, false, ctx); return; }
 
@@ -5006,9 +5008,12 @@
   /* 入れたときに何件に分かれるかを、打っている最中に見せる。入力欄の後ろに同じ折り返しの層を置き、
      項目ごとに薄い色を敷いて、分かれ目に線を引く */
   var PART_TINTS = ["#4f86c6", "#e0795b", "#57a773", "#a86cc1", "#d9a441", "#4bb3b3"];
+  /* 「まとめて1件にする」を押したら、空行があっても分けずに1件で入れる（入力欄を空にすると元に戻る） */
+  var keepWhole = false;
+  function splitCount(text){ var secret = detectSecret(text).hit; return (secret ? splitEntries(text) : splitBlocks(text)).length; }
   function splitPreview(text){
     var lines = String(text).split("\n");
-    var secret = detectSecret(text).hit, parts = secret ? splitEntries(text) : splitBlocks(text);
+    var secret = detectSecret(text).hit, parts = keepWhole ? [String(text).trim()] : secret ? splitEntries(text) : splitBlocks(text);
     if (parts.length < 2) return { n: parts.length, lines: lines, starts: [], secret: secret };
     var starts = [], ptr = 0;
     parts.forEach(function(p){
@@ -5019,6 +5024,11 @@
   }
   function renderMirror(){
     var m = $("inputMirror"), hint = $("splitHint"), pv = splitPreview(input.value);
+    if (!input.value.trim()) keepWhole = false;
+    if (keepWhole && splitCount(input.value) > 1){
+      m.hidden = true; m.textContent = "";
+      splitHintText(hint, "📎 空行があっても1件にまとめて入れます", "分ける", false); return;
+    }
     if (pv.n < 2 || pv.starts.length < 2){ m.hidden = true; m.textContent = ""; hint.hidden = true; return; }
     var cutLine = {}, cutTop = {}, part = [], k = -1, si = 0;
     pv.starts.slice(1).forEach(function(st){
@@ -5042,8 +5052,16 @@
       m.appendChild(el);
     });
     m.hidden = false; m.scrollTop = input.scrollTop;
-    hint.textContent = "✂ " + pv.n + "件に分けて入れます" + (pv.secret ? "（ログイン情報ごと）" : "（空行で分かれます）");
-    hint.hidden = false;
+    splitHintText(hint, "✂ " + pv.n + "件に分けて入れます" + (pv.secret ? "（ログイン情報ごと）" : "（空行で分かれます）"), "まとめて1件にする", true);
+  }
+  /* 分け方の案内と、分ける／まとめるの切り替えボタン */
+  function splitHintText(hint, msg, btnText, toWhole){
+    hint.textContent = msg + " ";
+    var b = document.createElement("button"); b.type = "button"; b.className = "split-toggle"; b.textContent = btnText;
+    b.addEventListener("pointerdown", function(e){ e.preventDefault(); });
+    b.addEventListener("mousedown", function(e){ e.preventDefault(); });
+    b.onclick = function(){ keepWhole = toWhole; renderMirror(); schedulePartPred(); renderPred(); };
+    hint.appendChild(b); hint.hidden = false;
   }
 
   /* ============================ 入りそうな枝の札 ============================ */
