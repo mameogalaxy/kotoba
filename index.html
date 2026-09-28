@@ -1183,7 +1183,7 @@
       out.push({ at:monthDay(mo, da), kind:kindAfter(re.lastIndex), label:labelAt(m.index, re.lastIndex) });
     }
     /* 「8-11-1日東星野ビル」のような住所の番地は日付にしない（数字の前が「-」「ー」なら飛ばす） */
-    re = /(^|[^\d月\/\-－ー‐−])(\d{1,2})日(?![前間後])/g;
+    re = /(^|[^\d月\/\-－ー‐−])(\d{1,2})\s*[.．]?\s*日(?![前間後])/g;
     while ((m = re.exec(text))){
       var da2 = +m[2]; if (da2 < 1 || da2 > 31) continue;
       var d2 = new Date(bd); d2.setDate(da2);
@@ -1534,6 +1534,19 @@
       }
     }
     if (!tag){ if (t >= 0.6) tag = "今日"; else if (r >= 0.75) tag = "忘れずに"; }
+    /* 「17時に連絡」のように時刻が書いてあれば、今日・明日のタグに時刻も付ける（近づいたら「もうすぐ」、過ぎたら「過ぎ」） */
+    if (/^(今日|今日まで|明日)$/.test(tag)){
+      var clk = parseClock(zen2han(dateText(n)));
+      if (clk){
+        tag += " " + clk;
+        if (/^今日/.test(tag)){
+          var mm = minutesUntil(clk);
+          if (mm >= 0 && mm <= 60){ tag = "もうすぐ " + clk; near = Math.max(near, 25); }
+          else if (mm < 0 && mm >= -30){ tag = "いま " + clk; near = Math.max(near, 25); }
+          else if (mm < -180) tag = clk + " 過ぎ";
+        }
+      }
+    }
     return { t:t, r:r, tag:tag, near:near, due:due };
   }
   /* Jev と期日の判定の分だけ、中心へ引き寄せる */
@@ -1616,7 +1629,7 @@
   function pinToday(){
     function rankOf(i){ return i.t * 0.7 + i.r * 0.3 + i.near / 100; }
     var list = nodes.map(function(n){ return { n:n, i:todayInfo(n) }; })
-      .filter(function(x){ var i = x.i; return i && (i.t >= 0.6 || i.r >= 0.85 || i.tag === "今日まで" || (i.tag === "明日" && i.r >= 0.5)); })
+      .filter(function(x){ var i = x.i; return i && (i.t >= 0.6 || i.r >= 0.85 || /^今日まで/.test(i.tag) || (/^明日/.test(i.tag) && i.r >= 0.5)); })
       /* 同じくらい今日のものは、時刻の早い順（時刻なしは後ろ） */
       .sort(function(a, b){
         var d = Math.round(rankOf(b.i) * 10) - Math.round(rankOf(a.i) * 10);
@@ -1626,7 +1639,7 @@
     todayState = list.length ? { picked: list.map(function(x){
       var i = x.i, label;
       if (i.rep && i.tag) label = i.tag + " · " + i.rep.label.replace(/ \d{1,2}:\d{2}$/, "");
-      else if (i.t >= 0.6) label = "今日" + (i.due && i.due.days === 0 && i.due.label ? " · " + i.due.label : "");
+      else if (i.t >= 0.6) label = (/^(今日|もうすぐ|いま)|過ぎ$/.test(i.tag) ? i.tag : "今日") + (i.due && i.due.days === 0 && i.due.label ? " · " + i.due.label : "");
       else if (i.tag && i.tag !== "忘れずに") label = i.tag + (i.due && i.due.label ? " · " + i.due.label : i.r >= 0.5 ? " · 忘れずに" : "");
       else label = x.n.remember ? "忘れずに" : "忘れずに " + Math.round(i.r * 100) + "%";
       return { n:x.n, why:"", ts:0, tag:label };
@@ -1876,6 +1889,7 @@
       if (ti.due){
         extra.push({ text: "期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
           + (ti.due.days === 0 ? " · 今日" : ti.due.days < 0 ? " · 過ぎた" : " · " + (ti.due.days === 1 ? "明日" : "あと" + ti.due.days + "日"))
+          + (function(){ var c = ti.due.days >= 0 ? parseClock(zen2han(dateText(n))) : null; return c ? " " + c : ""; })()
           + (ti.due.label ? " · " + ti.due.label : "") + " ✕", label: "期日を外す", act: function(){
             if (!window.confirm("この項目の日付は期日ではない、として外しますか？（あとで「＋ タグ」から戻せます）")) return;
             n.noDue = true; fixKind(n); put(n); pinToday();
@@ -1885,7 +1899,7 @@
           extra.push("ほか " + ti.due.rest.slice(0, 4).map(function(x){ var d = new Date(x.at); return (d.getMonth() + 1) + "/" + d.getDate() + (x.label ? " " + x.label : ""); }).join("・") + (ti.due.rest.length > 4 ? " …" : ""));
       }
       /* 確率・重要度・鮮度は Jev と並び順の中で使うだけで、画面には出さない */
-      if (ti.t >= 0.6 && !ti.due) extra.push({ text:"今日 ✕", act: function(){
+      if (ti.t >= 0.6 && !ti.due) extra.push({ text:(ti.tag && !/^忘れずに/.test(ti.tag) ? ti.tag : "今日") + " ✕", act: function(){
         n.notToday = true; if (n.today === dayKey()) delete n.today; put(n); pinToday();
         sheetNote = { id:n.id, text:"今日のことから外しました。日付を書き足せば、その日にまた出ます。" }; openSheet(n.id);
       } });
