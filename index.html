@@ -1391,7 +1391,11 @@
     var anchor = startOfDay(n.createdAt || n.updatedAt || Date.now()), today = startOfDay(Date.now()), next = null;
     for (var k = 0; k < 400; k++){
       var d = new Date(today); d.setDate(d.getDate() + k);
-      if (repeatHits(r, d.getTime(), anchor)){ next = { at:d.getTime(), days:k }; break; }
+      if (repeatHits(r, d.getTime(), anchor)){
+        /* 先回りして「今回の分は済み」にした回は飛ばして、その次の回を「次」にする */
+        if (k > 0 && n.doneOn && n.doneOn === dayKeyOf(d.getTime())) continue;
+        next = { at:d.getTime(), days:k }; break;
+      }
     }
     var age = "";
     if (r.kind === "yearly" && r.year && next){
@@ -1573,7 +1577,10 @@
   try { todayCache = JSON.parse(localStorage.getItem(TODAY_KEY) || "null") || todayCache; } catch(e){}
   if (!todayCache.items) todayCache.items = {};
   function saveToday(){ try { localStorage.setItem(TODAY_KEY, JSON.stringify(todayCache)); } catch(e){} }
-  function dayKey(){ var d = new Date(); return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate(); }
+  function dayKey(){ return dayKeyOf(Date.now()); }
+  /* 「2026-10-1」のような日付の鍵が今日より先か */
+  function isFutureKey(k){ var p = String(k).split("-"); return new Date(+p[0], +p[1] - 1, +p[2]).getTime() > startOfDay(Date.now()); }
+  function dayKeyOf(ts){ var d = new Date(ts); return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate(); }
   function todayOf(n){
     if (todayCache.date !== dayKey()) return null;
     var c = todayCache.items[n.id];
@@ -2039,6 +2046,26 @@
         put(n); pinToday(); openSheet(n.id);
       };
       dn.appendChild(db); sheetBody.appendChild(dn);
+    } else if (rpt && rpt.next && n.status !== "done"){
+      /* 前もって済ませた（定期購入を早めに済ませたなど）：今回の分だけ済みにして、次の回にまた出す */
+      var dn2 = document.createElement("div"); dn2.className = "sheet-actions"; dn2.style.marginTop = "0";
+      var db2 = document.createElement("button"); db2.type = "button";
+      var ahead = n.doneOn && n.doneOn !== dayKey() && isFutureKey(n.doneOn);
+      var nd = new Date(rpt.next.at), nl = (nd.getMonth() + 1) + "/" + nd.getDate();
+      if (ahead){
+        var pd = n.doneOn.split("-");
+        db2.className = "ghost"; db2.textContent = "✓ " + pd[1] + "/" + pd[2] + " の分は済み（取り消す）";
+        db2.onclick = function(){ delete n.doneOn; put(n); pinToday(); openSheet(n.id); };
+      } else {
+        db2.className = "ghost"; db2.textContent = "今回の分（" + nl + "）を先に済みにする";
+        db2.onclick = function(){
+          n.doneOn = dayKeyOf(rpt.next.at); put(n); pinToday();
+          var nx = repeatOf(n), nn = nx && nx.next ? new Date(nx.next.at) : null;
+          sheetNote = { id:n.id, text: nl + " の分を済みにしました。" + (nn ? "次は " + (nn.getMonth() + 1) + "/" + nn.getDate() + " にまた出ます。" : "") };
+          openSheet(n.id);
+        };
+      }
+      dn2.appendChild(db2); sheetBody.appendChild(dn2);
     }
     sheetBody.appendChild(picker);
     sheetBody.appendChild(form);
@@ -2193,6 +2220,7 @@
       var act = document.createElement("div"); act.className = "sheet-actions";
       var done = document.createElement("button"); done.type="button"; done.className = "primary"; done.textContent = "解決にする";
       done.onclick = function(){
+        if (repeatOf(n) && !window.confirm("繰り返しの予定です。解決にすると、次の回からも出なくなります。\n今回の分だけなら「今回の分を先に済みにする」を押してください。\n\n繰り返しごと解決にしますか？")) return;
         var v = (n.conclusion || "").trim();
         n.statusBefore = n.status; n.conclusion = v; n.conclusionAt = Date.now(); n.status = "done";
         put(n); closeSheet(); currentTab = "done"; syncTabs(); render();
