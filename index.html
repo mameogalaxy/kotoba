@@ -1245,7 +1245,13 @@
       if (d3.getTime() < base - 60 * DAY) d3.setFullYear(d3.getFullYear() + 1);
       out.push({ at:d3.getTime(), kind:"deadline" });
     }
-    if (/月末/.test(text)){ var d4 = new Date(bd); d4.setMonth(d4.getMonth() + 1, 0); out.push({ at:d4.getTime(), kind:"deadline" }); }
+    /* 「10月末」「10月月末」はその月の末日。月がなければ書いた月の末日 */
+    var mm4 = text.match(/(\d{1,2})\s*月\s*(?:の\s*)?(?:月)?末/);
+    if (mm4 && +mm4[1] >= 1 && +mm4[1] <= 12){
+      var d5 = new Date(bd.getFullYear(), +mm4[1], 0);
+      if (d5.getTime() < base - 60 * 86400000) d5 = new Date(bd.getFullYear() + 1, +mm4[1], 0);
+      out.push({ at:d5.getTime(), kind:"deadline" });
+    } else if (/月末/.test(text)){ var d4 = new Date(bd); d4.setMonth(d4.getMonth() + 1, 0); out.push({ at:d4.getTime(), kind:"deadline" }); }
     if (!out.length) return null;
     var today = startOfDay(Date.now()), seenAt = {};
     /* 同じ日は1つにまとめる（用件のあるほうを残す） */
@@ -1502,12 +1508,28 @@
   }
 
   /* Jev の判定（今日に関係するか・忘れると困るか）と、書いてある期日を合わせる */
+  /* 時期の言葉から、今月のどのあたりか（日にちの範囲）を返す */
+  function periodWindow(text){
+    var d = new Date(), last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    if (/月末|末日|月の終わり|月終わり|下旬|末頃|末ごろ|末まで/.test(text)) return { from: /下旬/.test(text) ? 21 : Math.max(21, last - 6), to:last, label:"今月末" };
+    if (/月初め|月初|月はじめ|上旬|初旬/.test(text)) return { from:1, to:10, label:"月初め" };
+    if (/中旬/.test(text)) return { from:11, to:20, label:"中旬" };
+    return null;
+  }
   function todayInfo(n){
     if (n.status === "done") return null;
     var j = todayOf(n), rp = repeatOf(n), due = rp ? null : dueOf(n), mineToday = n.today === dayKey();
-    if (!j && !due && !rp && !n.remember && !mineToday) return null;
+    if (!j && !due && !rp && !n.remember && !mineToday && !periodWindow(zen2han(dateText(n)))) return null;
     var t = j ? j.t : 0, r = j ? j.r : 0, tag = "", near = 0;
     if (n.notToday || (!due && !rp && isReference(n))) t = Math.min(t, 0.1);
+    /* 「月末」「下旬」「月初め」「中旬」のように時期だけ書いてあるものは、その時期（の少し前）まで今日のことに出さない。
+       月が替わったら次の月末まで待つ */
+    var win = !due ? periodWindow(zen2han(dateText(n))) : null;
+    if (win){
+      var dnow = new Date().getDate();
+      if (dnow < win.from - 3 || dnow > win.to){ t = Math.min(t, 0.1); r = Math.min(r, 0.5); }
+      else if (!tag){ tag = win.label; near = Math.max(near, dnow >= win.from ? 14 : 8); }
+    }
     /* 自分で付けた・外したタグは、Jev の判定より優先する */
     if (n.remember) r = Math.max(r, 0.9);
     if (n.noRemember) r = Math.min(r, 0.3);
@@ -1541,12 +1563,14 @@
         if (d < 0) t = Math.min(t, 0.1);
         else if (d === 0){ t = Math.max(t, 0.9); tag = "今日まで"; }
         else if (d <= 3){ t = Math.min(t, 0.3); tag = "あと" + d + "日"; near = 18; }
+        /* 期限がまだ先なら、忘れずにの確率が高くても今日のことには出さない（近づいたら出す） */
+        else { t = Math.min(t, 0.1); r = Math.min(r, 0.6); }
       } else {
         if (d < 0) t = Math.min(t, 0.05);
         else if (d === 0) t = Math.max(t, 0.95);
         else if (d === 1){ t = Math.min(t, 0.25); tag = "明日"; near = 25; }
         else if (d <= 6){ t = Math.min(t, 0.12); tag = "あと" + d + "日"; near = 10; }
-        else t = Math.min(t, 0.08);
+        else { t = Math.min(t, 0.08); r = Math.min(r, 0.6); }
       }
     }
     if (!tag){ if (t >= 0.6) tag = "今日"; else if (r >= 0.75) tag = "忘れずに"; }
