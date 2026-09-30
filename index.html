@@ -119,6 +119,15 @@
     border-radius:99px; padding:4px 11px; font:inherit; font-size:12.5px; font-weight:700}
   .status .vbtn{margin:4px 6px 0 0; border:1px solid var(--line); background:var(--bg); color:var(--ink2); border-radius:99px; padding:5px 12px; font:inherit; font-size:12.5px; text-decoration:none}
   .splithint{margin:0 0 6px 6px; font-size:12px; font-weight:700; color:var(--accent)}
+  /* 画像：入力欄の上の添付、材料の中のサムネイル、拡大表示 */
+  .imgtray{display:flex; gap:8px; overflow-x:auto; padding:0 2px 8px; scrollbar-width:none}
+  .imgtray .it{position:relative; flex:none; width:64px; height:64px; border-radius:10px; overflow:hidden; border:1px solid var(--line); background:var(--surface)}
+  .imgtray .it img{width:100%; height:100%; object-fit:cover; display:block}
+  .imgtray .it button{position:absolute; top:2px; right:2px; width:22px; height:22px; border-radius:50%; border:0; background:rgba(0,0,0,.55); color:#fff; font-size:13px; line-height:1; padding:0}
+  .mat-img{display:block; max-width:100%; max-height:260px; border-radius:10px; margin:4px 0 6px; border:1px solid var(--line); cursor:zoom-in; background:var(--surface)}
+  .br-img{display:block; max-width:100%; max-height:200px; border-radius:10px; margin:6px 0; border:1px solid var(--line)}
+  .imgview{position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.88); display:flex; align-items:center; justify-content:center; padding:16px}
+  .imgview img{max-width:100%; max-height:100%; border-radius:8px}
   .split-toggle{margin-left:6px; border:1px solid var(--accent); background:transparent; color:var(--accent); border-radius:99px; padding:3px 10px; font:inherit; font-size:12px; font-weight:700}
   #input{position:relative; z-index:1;}
   #input{flex:1; min-width:0; border:0; background:transparent; resize:none; font:inherit; font-size:16px;
@@ -485,11 +494,14 @@
     <div class="plusmenu" id="plusMenu" hidden>
       <div class="pm-list" id="pmList">
         <button type="button" class="pm-item" id="pmCat">🏷 カテゴリーを指定して入れる</button>
+        <button type="button" class="pm-item" id="pmImg">🖼 写真・スクショを入れる</button>
       </div>
       <div class="pm-cats" id="pmCats" hidden></div>
     </div>
     <p class="splithint" id="splitHint" hidden></p>
     <div class="predrow" id="predRow" hidden><button type="button" class="predtag" id="predTag"></button></div>
+    <div class="imgtray" id="imgTray" hidden></div>
+    <input type="file" id="imgPick" accept="image/*" multiple hidden>
     <div class="composer">
       <button class="plus" id="plus" type="button" aria-label="追加メニュー" aria-expanded="false">＋</button>
       <span class="cattag" id="catTag" hidden><span id="catName"></span><input id="catNew" type="text" maxlength="12" placeholder="枝の名前" autocomplete="off"><button type="button" id="catX" aria-label="枝の指定をやめる">×</button></span><span class="brk" aria-hidden="true"></span>
@@ -1684,6 +1696,88 @@
     return null;
   }
 
+  /* ============================ 画像 ============================ */
+  /* 画像は端末の中（IndexedDB）にだけ置く。項目の材料には画像の番号（img）だけを書く。Jev には送らない */
+  var imgDBp = null, imgURLs = {};
+  function imgDB(){
+    return imgDBp || (imgDBp = new Promise(function(res, rej){
+      var r = indexedDB.open("nou-img", 1);
+      r.onupgradeneeded = function(){ r.result.createObjectStore("img"); };
+      r.onsuccess = function(){ res(r.result); }; r.onerror = function(){ imgDBp = null; rej(r.error); };
+    }));
+  }
+  function imgTx(mode, fn){
+    return imgDB().then(function(db){ return new Promise(function(res, rej){
+      var tx = db.transaction("img", mode), st = tx.objectStore("img"), out = fn(st);
+      tx.oncomplete = function(){ res(out && out.result); }; tx.onerror = function(){ rej(tx.error); };
+    }); });
+  }
+  function imgPut(id, blob){ return imgTx("readwrite", function(st){ st.put(blob, id); }); }
+  function imgGet(id){ return imgTx("readonly", function(st){ return st.get(id); }); }
+  function imgDel(id){
+    if (!id) return;
+    if (imgURLs[id]){ URL.revokeObjectURL(imgURLs[id]); delete imgURLs[id]; }
+    imgTx("readwrite", function(st){ st.delete(id); }).catch(function(){});
+  }
+  function imgURL(id){
+    if (imgURLs[id]) return Promise.resolve(imgURLs[id]);
+    return imgGet(id).then(function(b){ return b ? (imgURLs[id] = URL.createObjectURL(b)) : null; }).catch(function(){ return null; });
+  }
+  /* 大きすぎる写真は長い辺1600pxまで縮めて JPEG にする（スクショの文字が読める程度） */
+  function shrinkImage(file){
+    return new Promise(function(res){
+      var url = URL.createObjectURL(file), im = new Image();
+      im.onload = function(){
+        var w = im.naturalWidth, h = im.naturalHeight, k = Math.min(1, 1600 / Math.max(w, h));
+        var c = document.createElement("canvas"); c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+        c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+        c.toBlob(function(b){ res(b || file); }, "image/jpeg", 0.85);
+      };
+      im.onerror = function(){ URL.revokeObjectURL(url); res(file); };
+      im.src = url;
+    });
+  }
+  /* 画像を縮めて保存し、番号を返す */
+  async function storeImage(file){
+    var blob = await shrinkImage(file), id = "img" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    await imgPut(id, blob);
+    return id;
+  }
+  function imageFiles(list){ return Array.prototype.filter.call(list || [], function(f){ return f && /^image\//.test(f.type); }); }
+  /* 貼り付け・クリップボードから画像を取り出す */
+  function pastedImages(e){
+    var items = (e.clipboardData && e.clipboardData.items) || [], out = [];
+    Array.prototype.forEach.call(items, function(it){ if (it.kind === "file" && /^image\//.test(it.type)){ var f = it.getAsFile(); if (f) out.push(f); } });
+    return out;
+  }
+  async function clipboardImages(){
+    if (!navigator.clipboard || !navigator.clipboard.read) return [];
+    try {
+      var items = await navigator.clipboard.read(), out = [];
+      for (var i = 0; i < items.length; i++){
+        var t = items[i].types.filter(function(x){ return /^image\//.test(x); })[0];
+        if (t) out.push(await items[i].getType(t));
+      }
+      return out;
+    } catch(e){ return []; }
+  }
+  function imgEl(id, cls){
+    var im = document.createElement("img"); im.className = cls; im.alt = "画像"; im.loading = "lazy";
+    imgURL(id).then(function(u){ if (u) im.src = u; else { im.alt = "（画像が見つかりません）"; } });
+    im.addEventListener("click", function(e){ e.stopPropagation(); viewImage(id); });
+    return im;
+  }
+  function viewImage(id){
+    imgURL(id).then(function(u){
+      if (!u) return;
+      var v = document.createElement("div"); v.className = "imgview"; v.setAttribute("role", "dialog");
+      var im = document.createElement("img"); im.src = u; im.alt = "画像"; v.appendChild(im);
+      v.onclick = function(){ v.remove(); };
+      document.body.appendChild(v);
+    });
+  }
+  function nodeImages(n){ return (n.materials || []).map(function(m){ return m.img; }).filter(Boolean); }
+
   /* ============================ 保存 ============================ */
   /* 枝を使った時刻（入れた・開いた・直した）。マップでは最近使った枝ほど中心の近くに置く */
   var CATUSE_KEY = "nou.catuse.v1", catUse = {};
@@ -1711,6 +1805,7 @@
     saveNodes(); render();
   }
   function remove(n){
+    nodeImages(n).forEach(imgDel);
     nodes = nodes.filter(function(x){ return x.id !== n.id; });
     saveNodes(); closeSheet(); render();
   }
@@ -1966,8 +2061,10 @@
     if ((n.materials||[]).length){
       mats.forEach(function(m){
         var d = document.createElement("div"); d.className = "mat"; d._at = m.at;
+        if (m.img) d.appendChild(imgEl(m.img, "mat-img"));
         var ta = document.createElement("textarea");
         ta.className = "mat-edit"; ta.rows = 1; ta.value = m.text; ta.spellcheck = false;
+        if (m.img && !m.text) ta.placeholder = "（画像）ひとこと書けます";
         ta.setAttribute("aria-label", "材料（タップして直せます）");
         d.appendChild(ta);
         liveEdit(ta, false, function(v){
@@ -1989,6 +2086,7 @@
           del.onclick = function(){
             if (!window.confirm("この材料を消しますか？")) return;
             editNode(n, function(){ n.materials = n.materials.filter(function(x){ return x !== m; }); });
+            if (m.img) imgDel(m.img);
           };
           foot.appendChild(del);
         }
@@ -2079,6 +2177,18 @@
       sheetBody.appendChild(addRow);
       /* コピーしてきた内容を貼るボタン。コピーしたかどうかは iPhone が押すまで教えてくれないので、出しっぱなしにして押したときだけ読む */
       addRow.insertBefore(pasteButton(n), gs.nextSibling);
+      /* 写真・スクショを材料に足す */
+      var ib = document.createElement("button"); ib.type = "button"; ib.className = "ghost"; ib.textContent = "🖼 画像";
+      ib.onclick = function(){
+        var f = document.createElement("input"); f.type = "file"; f.accept = "image/*"; f.multiple = true;
+        f.onchange = function(){ addImageMaterials(n, imageFiles(f.files), ta.value.trim()); };
+        f.click();
+      };
+      addRow.appendChild(ib);
+      ta.addEventListener("paste", function(e){
+        var fs = pastedImages(e); if (!fs.length) return;
+        e.preventDefault(); addImageMaterials(n, fs, ta.value.trim());
+      });
       if (focusAddMat){ focusAddMat = false; setTimeout(function(){ var el = $("addMat"); if (el) el.focus(); }, 30); }
       var act = document.createElement("div"); act.className = "sheet-actions";
       var done = document.createElement("button"); done.type="button"; done.className = "primary"; done.textContent = "解決にする";
@@ -2244,9 +2354,28 @@
   function clearPasteFor(){ try { localStorage.removeItem(PASTE_KEY); } catch(e){} }
   /* Google のページ（「脳みそに送る」でコピーしたもの）らしいか。違う古いコピーをうっかり貼らないため */
   function looksLikeGoogle(t){ return AI_HEAD.test(t) || /^.+\s[-–—]\s*Google\s*(検索|Search)\s*$/im.test(String(t).split("\n")[0] || ""); }
+  /* 画像を材料として足す（欄に書いてあった文字は1枚目の説明にする） */
+  async function addImageMaterials(n, files, caption){
+    if (!files.length) return;
+    sheetNote = { id:n.id, text:"画像を入れています…", busy:true }; refreshSheet(n);
+    var mats = [], at = Date.now();
+    for (var i = 0; i < files.length; i++){
+      try { mats.push({ text: i === 0 ? (caption || "") : "", at: at + i, img: await storeImage(files[i]) }); }
+      catch(e){ sheetNote = { id:n.id, text:"画像を保存できませんでした（" + (e.message || "容量") + "）", bad:true }; refreshSheet(n); return; }
+    }
+    var addTa = $("addMat"); if (caption && addTa) addTa.value = "";
+    justAddedAt = mats[0].at;
+    n.materials = (n.materials || []).concat(mats); put(n);
+    sheetNote = { id:n.id, text:"画像を " + mats.length + "枚 材料に足しました。" };
+    if (document.activeElement && sheetBody.contains(document.activeElement)) document.activeElement.blur();
+    openSheet(n.id); scrollToMat(mats[0].at);
+  }
   function pasteButton(n){
     var go = document.createElement("button"); go.type = "button"; go.className = "ghost"; go.textContent = "📋 貼る";
     go.onclick = async function(){
+      /* コピーしたのが画像なら、画像の材料にする */
+      var ims = await clipboardImages();
+      if (ims.length){ addImageMaterials(n, ims, ""); return; }
       var raw = "";
       /* iPhone では押したあとに出る「ペースト」を押すと読める（勝手には読めない仕組み） */
       try { raw = await navigator.clipboard.readText(); } catch(e){ raw = ""; }
@@ -3694,8 +3823,54 @@
     fixKind(n); return n;
   }
 
+  /* ============================ 入力欄に付ける画像 ============================ */
+  var pendingImgs = [];
+  async function addPendingImages(files){
+    if (!files.length) return;
+    closePlus();
+    for (var i = 0; i < files.length; i++){
+      try { var id = await storeImage(files[i]); pendingImgs.push(id); }
+      catch(e){ note("画像を保存できませんでした（" + (e.message || "容量") + "）", "bad"); }
+    }
+    renderTray(); syncComposer && syncComposer();
+  }
+  function renderTray(){
+    var tr = $("imgTray"); tr.textContent = "";
+    pendingImgs.forEach(function(id, k){
+      var it = document.createElement("div"); it.className = "it";
+      var im = document.createElement("img"); im.alt = "付ける画像"; imgURL(id).then(function(u){ if (u) im.src = u; }); it.appendChild(im);
+      var x = document.createElement("button"); x.type = "button"; x.textContent = "×"; x.setAttribute("aria-label", "この画像を外す");
+      x.onclick = function(){ pendingImgs.splice(k, 1); imgDel(id); renderTray(); };
+      it.appendChild(x); tr.appendChild(it);
+    });
+    tr.hidden = !pendingImgs.length;
+    var c = input.closest(".composer"); if (c) c.classList.toggle("hastext", !!input.value.trim() || pendingImgs.length > 0);
+  }
+  /* 画像つきで入れる。見出しは書いた文の1行目（なければ「📷 画像 9/30」）。枝は ＋ で選んだ枝か、文から Jev が選ぶ */
+  async function captureWithImages(text, ctx){
+    var t = Date.now(), ids = pendingImgs.slice(); pendingImgs = []; renderTray();
+    var hb = text ? headAndBody(text) : null, d = new Date(t);
+    var guess = !ctx && text ? guessCtx(text) : null;
+    var n = { id:newId(), title: hb ? hb.title : "📷 画像 " + (d.getMonth() + 1) + "/" + d.getDate(),
+      kind:"事実メモ", context: ctx || (guess && CONTEXTS.indexOf(guess.name) >= 0 ? guess.name : "その他"), status:"note",
+      importance:3, freshness:"数週間もつ", createdAt:t, updatedAt:t, conclusion:"", conclusionAt:0,
+      materials: ids.map(function(id, k){ return { text: k === 0 && hb ? hb.body : "", at: t + k, img: id }; }) };
+    if (hb && hb.body !== text) n.titleCustom = true;
+    if (ctx) n.ctxLocked = true;
+    fixKind(n); put(n);
+    input.value = ""; clearFusen(); syncClear && syncClear();
+    noteLanded(n, "「" + n.title + "」を画像" + ids.length + "枚つきで " + ctxName(n.context) + " に入れました。");
+    Mind.flash(n.id, ctxName(n.context) + " に入りました");
+    /* 文があれば、枝を Jev に選び直させる（画像は送らない。パスワードらしい文なら送らない） */
+    if (text && !ctx && getCfg().key && !detectSecret(text).hit){ try { await reclassifyNode(n); put(n); } catch(e){} }
+  }
   async function capture(){
     var text = input.value.trim();
+    if (pendingImgs.length){
+      var ictx = null;
+      if (catTag){ ictx = catTag.isNew ? $("catNew").value.trim() : catTag.name; if (catTag.isNew && ictx){ var er = addBranch(ictx); if (!er) onBranchesAdded([ictx]); } clearCatTag(); }
+      await captureWithImages(text, ictx || null); return;
+    }
     if (catTag){
       var name = catTag.isNew ? $("catNew").value.trim() : catTag.name;
       if (!name){ $("catNew").focus(); return; }
@@ -3945,7 +4120,7 @@
       freshness: HALFLIFE[x.freshness] ? x.freshness : "数週間もつ",
       createdAt: num(x.createdAt, Date.now()), updatedAt: num(x.updatedAt, num(x.createdAt, Date.now())),
       materials: (Array.isArray(x.materials) ? x.materials : []).filter(function(m){ return m && typeof m.text === "string"; })
-        .slice(0, 200).map(function(m){ return { text: m.text.slice(0, 2000), at: num(m.at, Date.now()) }; }),
+        .slice(0, 200).map(function(m){ var o = { text: m.text.slice(0, 2000), at: num(m.at, Date.now()) }; if (typeof m.img === "string") o.img = m.img.slice(0, 40); return o; }),
       conclusion: typeof x.conclusion === "string" ? x.conclusion.slice(0, 1000) : "",
       conclusionAt: num(x.conclusionAt, 0),
       statusBefore: x.statusBefore === "note" || x.statusBefore === "open" ? x.statusBefore : undefined,
@@ -4103,7 +4278,8 @@
     var lk = nodeLinks(n); if (lk.length) c.appendChild(linkRow(lk, n.title));
     var mats = (n.materials || []).slice().sort(function(a, b){ return a.at - b.at; });
     mats.forEach(function(m){
-      if (!n.secret && m.text === n.title && mats.length === 1) return;
+      if (m.img) c.appendChild(imgEl(m.img, "br-img"));
+      if (!m.text || (!n.secret && m.text === n.title && mats.length === 1)) return;
       var p = document.createElement("p"); p.className = "br-mat"; p.textContent = m.text; c.appendChild(p);
     });
     if (n.conclusion){ var cc = document.createElement("div"); cc.className = "concl"; cc.textContent = n.conclusion; c.appendChild(cc); }
@@ -4578,7 +4754,7 @@
             var k = "i:" + n.id;
             var tg = todayTag(n);
             want[k] = { kind:"item", x: left ? x0 : x0 + colW - itemW, y:iy, w:itemW, h:itemH, c:color,
-                        text: (nodeLinks(n).length ? "🔗 " : "") + (n.title || "(無題)"), id:n.id, status:n.status || "open", meta: tg, flag: !!tg,
+                        text: (nodeLinks(n).length ? "🔗 " : "") + (nodeImages(n).length && !/^📷/.test(n.title || "") ? "📷 " : "") + (n.title || "(無題)"), id:n.id, status:n.status || "open", meta: tg, flag: !!tg,
                         op: dim !== null ? dim : (tg ? 1 : 0.5 + 0.5 * freshWeight(n)) };
             links.push({ from:prev, to:k, c:color, kind:"item" });
             prev = k;
@@ -4601,7 +4777,7 @@
         var n = find(id); if (!n) return;
         var color = colorOf(catOf(n)), k = "i:" + n.id;
         want[k] = { kind:"item", cand:true, x:(W - candW)/2, y:cy2, w:candW, h:candRow, c:color,
-                    text: (nodeLinks(n).length ? "🔗 " : "") + (n.title || "(無題)") + (n.status === "done" && n.conclusion ? "  →  " + n.conclusion : ""),
+                    text: (nodeLinks(n).length ? "🔗 " : "") + (nodeImages(n).length && !/^📷/.test(n.title || "") ? "📷 " : "") + (n.title || "(無題)") + (n.status === "done" && n.conclusion ? "  →  " + n.conclusion : ""),
                     id:n.id, status:n.status || "open", op:1, meta: metaById[n.id] || when(n.createdAt) };
         links.push({ from:"hub", to:k, c:color, kind:"cand" });
         cy2 += candRow + candGap;
@@ -5211,6 +5387,14 @@
   input.addEventListener("scroll", function(){ $("inputMirror").scrollTop = input.scrollTop; });
   $("plus").addEventListener("click", function(){ if ($("plusMenu").hidden) openPlus(); else closePlus(); });
   $("pmCat").addEventListener("click", function(){ showCatChoices(); });
+  $("pmImg").addEventListener("click", function(){ $("imgPick").value = ""; $("imgPick").click(); });
+  $("imgPick").addEventListener("change", function(){ addPendingImages(imageFiles(this.files)); });
+  /* スクショを入力欄に貼ったら、画像として付ける */
+  input.addEventListener("paste", function(e){
+    var fs = pastedImages(e); if (!fs.length) return;
+    if (!(e.clipboardData && e.clipboardData.getData("text/plain"))) e.preventDefault();
+    addPendingImages(fs);
+  });
   $("predTag").onclick = function(){ openPlus(); showCatChoices(); };
   $("catX").addEventListener("click", function(){ clearCatTag(); input.focus(); });
   $("catNew").addEventListener("input", function(){ $("catTag").style.setProperty("--c", colorForNew($("catNew").value.trim())); });
@@ -5291,7 +5475,7 @@
   function syncComposer(){
     var c = input.closest(".composer"); if (!c) return;
     c.classList.toggle("typing", document.activeElement === input || !!input.value);
-    c.classList.toggle("hastext", !!input.value.trim());
+    c.classList.toggle("hastext", !!input.value.trim() || pendingImgs.length > 0);
   }
   input.addEventListener("focus", syncComposer);
   input.addEventListener("blur", function(){ setTimeout(syncComposer, 120); });
