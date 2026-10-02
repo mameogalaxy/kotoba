@@ -744,6 +744,11 @@
         var m0 = (n.materials || []).slice().sort(function(a, b){ return a.at - b.at; })[0];
         n.title = titleOf(m0 && linksIn(m0.text).length ? m0.text : n.title);
       }
+      /* 「1行目が見出し」にする前に入れた2行以上の項目も、見出しを自分で直していなければ1行目にそろえる（材料はそのまま） */
+      if (!n.secret && !n.titleCustom && n.materials && n.materials.length){
+        var f1 = n.materials.slice().sort(function(a, b){ return a.at - b.at; })[0], hb1 = headAndBody(f1.text);
+        if (hb1.body !== String(f1.text).trim() && n.title === plainTitle(f1.text) && hb1.title !== n.title) n.title = hb1.title;
+      }
       /* 【】を見出しにする前に入れた項目も、見出しを自分で変えていなければ【】の中身にそろえる */
       if (!n.secret && !n.titleCustom && n.materials && n.materials.length){
         var f0 = n.materials.slice().sort(function(a, b){ return a.at - b.at; })[0], bt = bracketTitle(f0.text);
@@ -1181,6 +1186,12 @@
       if (!lab){ var first = text.split("\n")[0].replace(DATE_BIT, " ").replace(/\s+/g, " ").trim(); if (first && ls > 0) lab = first; }
       return lab.length > 12 ? lab.slice(0, 12) + "…" : lab;
     }
+    /* その日付のすぐあとに書いてある時刻（次の日付・空行の手前まで）。別の日の時刻は拾わない */
+    function clockAt(s, e){
+      var seg = text.slice(e), stop = seg.search(/\n\s*\n|\d{1,2}\s*[\/月]\s*\d{1,2}|(^|[^\d\-－ー])\d{1,2}\s*[.．]?\s*日(?![前間後])/);
+      if (stop >= 0) seg = seg.slice(0, stop);
+      return parseClock(seg) || "";
+    }
     function monthDay(mo, da){
       var d = new Date(bd); d.setMonth(mo - 1, da);
       if (d.getTime() < base - 60 * DAY) d.setFullYear(d.getFullYear() + 1);
@@ -1192,7 +1203,7 @@
     re = /(\d{1,2})\s*[\/月]\s*(\d{1,2})\s*日?/g;
     while ((m = re.exec(text))){
       var mo = +m[1], da = +m[2]; if (mo < 1 || mo > 12 || da < 1 || da > 31) continue;
-      out.push({ at:monthDay(mo, da), kind:kindAfter(re.lastIndex), label:labelAt(m.index, re.lastIndex) });
+      out.push({ at:monthDay(mo, da), kind:kindAfter(re.lastIndex), label:labelAt(m.index, re.lastIndex), clock:clockAt(m.index, re.lastIndex) });
     }
     /* 「8-11-1日東星野ビル」のような住所の番地は日付にしない（数字の前が「-」「ー」なら飛ばす） */
     re = /(^|[^\d月\/\-－ー‐−])(\d{1,2})\s*[.．]?\s*日(?![前間後])/g;
@@ -1200,7 +1211,7 @@
       var da2 = +m[2]; if (da2 < 1 || da2 > 31) continue;
       var d2 = new Date(bd); d2.setDate(da2);
       if (d2.getTime() < base) d2.setMonth(d2.getMonth() + 1);
-      out.push({ at:d2.getTime(), kind:kindAfter(re.lastIndex), label:labelAt(m.index + m[1].length, re.lastIndex) });
+      out.push({ at:d2.getTime(), kind:kindAfter(re.lastIndex), label:labelAt(m.index + m[1].length, re.lastIndex), clock:clockAt(m.index + m[1].length, re.lastIndex) });
     }
     /* 「9月休み」の見出しの下に「24 免許更新」「27」…と日にちだけ並べた書き方。1行の「9月休み 24、27、30」も読む */
     var hm = 0, hl = "";
@@ -1261,7 +1272,7 @@
     var fut = uniq.filter(function(x){ return x.at >= today; });
     var pick = fut[0] || uniq[uniq.length - 1];
     var rest = fut.slice(1).map(function(x){ return { at:x.at, label:x.label || "", days: Math.round((x.at - today) / DAY) }; });
-    return { at:pick.at, kind:pick.kind, days: Math.round((pick.at - today) / DAY), label: pick.label || "", rest: rest };
+    return { at:pick.at, kind:pick.kind, days: Math.round((pick.at - today) / DAY), label: pick.label || "", clock: pick.clock || "", rest: rest };
   }
 
   /* ============================ 繰り返しの予定 ============================ */
@@ -1576,7 +1587,8 @@
     if (!tag){ if (t >= 0.6) tag = "今日"; else if (r >= 0.75) tag = "忘れずに"; }
     /* 「17時に連絡」のように時刻が書いてあれば、今日・明日のタグに時刻も付ける（近づいたら「もうすぐ」、過ぎたら「過ぎ」） */
     if (/^(今日|今日まで|明日)$/.test(tag)){
-      var clk = parseClock(zen2han(dateText(n)));
+      /* 日付があればその日の行の時刻だけ。日付がなければ文の中の時刻 */
+      var clk = due ? due.clock : parseClock(zen2han(dateText(n)));
       if (clk){
         tag += " " + clk;
         if (/^今日/.test(tag)){
@@ -2015,7 +2027,7 @@
       if (ti.due){
         extra.push({ text: "期日 " + when(ti.due.at).split(" ")[0] + (ti.due.kind === "deadline" ? "まで" : "")
           + (ti.due.days === 0 ? " · 今日" : ti.due.days < 0 ? " · 過ぎた" : " · " + (ti.due.days === 1 ? "明日" : "あと" + ti.due.days + "日"))
-          + (function(){ var c = ti.due.days >= 0 ? parseClock(zen2han(dateText(n))) : null; return c ? " " + c : ""; })()
+          + (ti.due.days >= 0 && ti.due.clock ? " " + ti.due.clock : "")
           + (ti.due.label ? " · " + ti.due.label : "") + " ✕", label: "期日を外す", act: function(){
             if (!window.confirm("この項目の日付は期日ではない、として外しますか？（あとで「＋ タグ」から戻せます）")) return;
             n.noDue = true; fixKind(n); put(n); pinToday();
